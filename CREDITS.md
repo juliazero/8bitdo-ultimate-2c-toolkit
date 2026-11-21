@@ -1,5 +1,7 @@
 # Credits
 
+- **JehuAlv/Pad8Lab** (https://github.com/JehuAlv/Pad8Lab): reference for Windows HID report framing and Bluetooth service-path detection in the Windows HIDAPI backend.
+
 - **jgus-org/8bitdo-2c-re-flake** (MIT, https://github.com/jgus-org/8bitdo-2c-re-flake): reverse engineering of the Ultimate 2C's update protocol, bootloader protocol and recovery, and of the dual-bank flash layout. This project reimplements those protocols from jgus's notes and does not copy its code.
 - **xpadneo** (GPL-3.0-or-later for its documentation, https://github.com/atar-axis/xpadneo): `docs/descriptors/xbxs.md` holds the captured Xbox Series X|S Bluetooth HID report descriptor used here.
 - **supercypok/ultimate2c-ring** (MIT, https://github.com/supercypok/ultimate2c-ring): the method for the Home ring tweak: driving PB7 with PWM1, the registers involved, the LED task's call at `0xd4f0` and the startup state at `0xa3fa`. This project reimplements it in its own code and does not copy its helper.

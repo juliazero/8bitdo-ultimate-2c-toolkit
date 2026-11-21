@@ -42,7 +42,7 @@ Everything here is ours, in `firmware-src/packer.c`; none of it exists in stock.
 - **Level over Bluetooth**: the Xbox rumble output report, with the high bit (`0x80`) set in the first value byte (`p[9]`), which no rumble mask uses. `p[10]` is the level and `p[11]` is non-zero to save. `rumble_write` handles it and never starts a motor for it. It needs the ring code to be present.
 - **Settings record `+25`** (`0x73019`, RAM `0x843929`): the low nibble is the saved level and the high nibble is the level installed when it was saved. A save made under another installed level is ignored at start and replaced by the installed level, so choosing a level in the app wins over an old save.
 - **Alerts flag** at `0x18ff0`: `1` turns battery alerts on (slow blink while charging, fast blink at 15 % or less, pulses); anything else, including blank, leaves them off. The firmware reads it and never writes it; the app changes it with the "Battery alerts" tweak.
-- **Level by buttons**: L4 and R4 pressed together step to the next level and save after 3 seconds. This reads the physical button word `0x84344c`, with L4 at bit 26 and R4 at bit 25, because stock clears a mapped paddle's bit in `0x84342c`.
+- **Level by buttons**: L4 and R4 held together for 5 seconds step once to the next level, then save after 3 seconds. Short taps are ignored; release either paddle to rearm. This reads the physical button word `0x84344c`, with L4 at bit 26 and R4 at bit 25, because stock clears a mapped paddle's bit in `0x84342c`.
 
 ## Controller settings (our additions)
 
@@ -61,3 +61,55 @@ Everything here is ours, in `firmware-src/packer.c`; none of it exists in stock.
 Hooks: `0x6a90`, `0x6abc` (run `0xa90`, `0xabc`) for the sticks, instead of `0x890`; `0xc910` for triggers and remapping, before `0xc3a8`, with its code in the dead RAM code at run address `0x1210` (image `0x7210`); `0xdce6`, `0xeaf4` and `rumble_tail` for the games' rumble; `0xa0f8`, `0xdaa8` for the buzz on connecting; `0xd1c8` for the idle limit. The tweak `fixes`: `0xa480`, `0xea88`, and the pointer at `0x178cc`.
 
 Dangerous commands exist on this channel, with no authentication. The app must never send, outside an update: `81 05 02/03/04/0b/c4` (they write or erase flash at `0x3f000-0x7f000`, including the MAC sector), `81 05 00 38` (moves the saved trigger endpoints each time), `81 05 00 61` (the edition at `0x77000`), `81 xx 66 AA 63/64` (`64` zeroes stock's record, and both set a tool session flag until restart).
+
+## Stock USB D-input startup
+
+Firmware 1.09 contains a USB selector at `0xf014`, called from `0xa414`.
+Its B/X and saved-mode branch is gated by `0xd7c8`, which reads `0x843470`.
+This is **not the USB connection flag**. Function `0xd794` sets it only when
+PD0 external power is present and measured battery voltage at `0x843424` is
+at most 1999 mV. This selects the batteryless variant path. At normal Wireless
+battery voltage (e.g. 3700 mV), the selector ignores B/X and the saved wired
+mode byte, and selects XInput. The earlier test incorrectly forced this flag.
+
+The experimental runtime patch now gates on USB configuration state
+`0x8434d8 == 2` (the same condition used by input sender `0xf378`) plus PD0
+external power. It calls `0xeffc` for D-input or `0xefe4` for XInput. Both change
+`0x842e38` and invoke re-enumeration `0xe9e8` only when changing mode.
+
+In D-input, `0xe860` returns device descriptor `0x17af4` on the battery-equipped
+Wireless: **2dc8:301b over USB**. The batteryless path uses `0x1797c`, 2dc8:301d.
+Configuration getter `0xe7c4` returns `0x179c8`; report-map getter `0xe80c`
+returns `0x17b74` (145 bytes): 15 buttons + pad, hat + pad, X/Y/Z/Rz8 and
+Gas/Brake8, 10 bytes including report ID. Reports 02/81 share the collection.
+Bluetooth uses the same 301b PID with a different report layout, so transport
+must participate in discovery, diagnostics category and input decoding.
+
+`tools/check_usb_startup.py` now executes original variant detection from GPIO
+and battery voltage, then the stock selector for batteryless and battery-equipped
+cases. `tools/check_usb_mode_prototype.py` tests the corrected runtime patch at
+3700 mV with the real original variant-detection instructions. USB host events
+and peripheral drivers remain modeled; physical re-enumeration is still unverified.
+
+## Five-second Home ring shortcut layout
+
+The published 2892-byte shared block is retained byte-for-byte. A separately
+compiled 148-byte `main_poll` at `0x18f50` uses the former padding byte at
+`0x84164b` for chord state and the former edge word at `0x841650` for the hold
+timestamp. Struct size remains 28 bytes, preserving the USB state gap.
+`ringtail5.bin` contains both blocks (3044 bytes, 12 bytes before the flag area).
+`pollhook5.bin` and `wdog5.bin` point to the new poll; previous blobs are retained
+for identification. `tools/build_ring_hold.py` verifies and resolves the three
+TC32 call relocations without shifting any existing shared-code addresses.
+`tools/check_ring_hold.py` executes the actual compiled function, including
+five-second boundaries, short/interrupted holds, release, wrap and preserved
+stock callbacks. Firmware must be reinstalled to change the hardware shortcut.
+
+## Persistent USB and dual Bluetooth profiles
+
+The application span is extended to 0x1a000 for the optional dual Bluetooth
+profile sector; see [Bluetooth modes](bluetooth-modes.md). This supersedes the
+historical 0x19000 application limit above. USB mode uses settings byte +5 bit 0;
+Bluetooth uses bit 1, saved on changed choices through the original journal.
+The Bluetooth state occupies the single unused alignment byte 0x8416d2; the
+called radio function beginning at 0x16d4 is not overwritten.

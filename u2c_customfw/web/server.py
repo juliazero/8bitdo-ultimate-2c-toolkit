@@ -4,12 +4,13 @@ be this address (against DNS rebinding)."""
 import datetime
 import json
 import os
+import re
 import secrets
+import socket
 import subprocess
 import sys
 import threading
 import time
-import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -17,18 +18,91 @@ from urllib.parse import parse_qs, urlparse
 from .. import __version__, disclaimer, settings, state, update
 from .. import cli
 from ..firmware import recipes
-from ..ops import backup as bkp, battery as battery_ops, battlog, dongle, probe, report as report_mod, shown, update_available
+from ..ops import backup as bkp, battlog, dongle, probe, report as report_mod, shown, update_available
+from ..ops.devices import XINPUT_NOTE, Found
 from ..ops import settings as settings_ops
 from ..ops.plan import OpError
 from ..protocol import ProtocolError, app
 from ..transport import PermissionDenied
 from . import jobs
 from .linux_gamepad import GAMEPAD
+from .windows_rumble import RUMBLE as WINDOWS_RUMBLE
+from .hid_rumble import RUMBLE as HID_RUMBLE
+from .windows_battery import snapshot as windows_battery
+from .windows_stock_gamepad import GAMEPAD as WINDOWS_STOCK_GAMEPAD
+
+def read_controller_details(f, store):
+    """UI-only reads: recover a transient Windows D-input handle once, never replay flash jobs."""
+    for attempt in range(2):
+        try:
+            ch=cli.open_channel(f.info,0 if f.mode=='boot' else 0x81)
+            try:
+                return probe.read_firmware(ch,f.mode), cli.unit_backups(ch,store,f.mode,whole=False)
+            finally:ch.close()
+        except probe.PairedDongle:raise
+        except (OpError,OSError,ProtocolError):
+            if attempt or sys.platform!='win32' or f.mode!='cable_dinput':raise
+            time.sleep(.1)
+
 
 STATIC = Path(__file__).parent / "static"
 SETTINGS_MISSING = "Controller settings isn't installed. Install it in the Firmware tab to change the sticks, triggers, buttons and vibration."
+SIMULATION_WORLD = None
 KEEPALIVE_S = 15
 TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css"}
+
+
+def open_store(store):
+    folder = Path(store).resolve()
+    folder.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "win32":
+        os.startfile(str(folder))
+    else:
+        subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(folder)],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def page_html():
+    """One self-contained document, preserving parser/DOMContentLoaded ordering.
+
+    A dropped stylesheet/script request must not leave only some app modules
+    initialized. Individual source assets remain available for debugging.
+    """
+    page = (STATIC / "index.html").read_bytes()
+    css = (STATIC / "style.css").read_bytes()
+    page = page.replace(b'<link rel="stylesheet" href="/static/style.css">', b'<style>' + css + b'</style>')
+    for name in ('startup.js','diagnostics.js','settings.js','simulation.js','app.js'):
+        script = (STATIC / name).read_bytes()
+        script = re.sub(br'</script', lambda m: b'<\\/script', script, flags=re.I)
+        tag = ('<script src="/static/' + name + '"></script>').encode()
+        page = page.replace(tag, b'<script>\n' + script + b'\n</script>')
+    return page
+
+
+class LocalHTTPServer(ThreadingHTTPServer):
+    allow_reuse_address = sys.platform != "win32"
+
+    def server_bind(self):
+        if sys.platform == "win32":
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+    def shutdown_request(self, request):
+        if sys.platform != "win32":
+            return super().shutdown_request(request)
+        # Winsock can reset the peer if the socket is closed immediately after
+        # sending. Half-close, then briefly let the peer finish receiving/close.
+        try:
+            request.shutdown(socket.SHUT_WR)
+            deadline = time.monotonic() + 2.0
+            while (remaining := deadline - time.monotonic()) > 0:
+                request.settimeout(remaining)
+                if not request.recv(4096):
+                    break
+        except OSError:
+            pass
+        finally:
+            self.close_request(request)
 
 
 def make_server(store: Path, port: int = 0):
@@ -37,6 +111,15 @@ def make_server(store: Path, port: int = 0):
     checked = {}   # GitHub is asked once per launch
 
     class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+        disable_nagle_algorithm = True   # Small input reports must not wait for TCP batching.
+
+        def handle(self):
+            try:
+                super().handle()
+            except (ConnectionResetError, BrokenPipeError):
+                self.close_connection = True  # client closed a persistent connection
+
         def log_message(self, *a):
             pass
 
@@ -46,6 +129,11 @@ def make_server(store: Path, port: int = 0):
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "no-store")
+            # Keep HTTP/1.1 browser connections alive. Explicit close is needed
+            # for rejected requests whose body may not have been consumed.
+            if self.close_connection or code >= 400:
+                self.send_header("Connection", "close")
+                self.close_connection = True
             self.end_headers()
             self.wfile.write(data)
 
@@ -67,15 +155,67 @@ def make_server(store: Path, port: int = 0):
             if not self.host_ok():
                 return self.send(403, "forbidden", "text/plain")
             path = self.path.split("?")[0]
-            route = {"/api/state": self.api_state, "/api/events": self.api_events, "/api/firmware": self.api_firmware,
-                     "/api/settings": self.api_settings_read, "/api/linux-gamepad": self.api_linux_gamepad, "/api/busy": self.api_busy, "/api/update": self.api_update, "/api/battery": self.api_battery}.get(path)
+            route = {"/api/simulation": self.api_simulation, "/api/windows-stock-stream": self.api_windows_stock_stream, "/api/windows-stock-gamepad": self.api_windows_stock_gamepad, "/api/windows-battery": self.api_windows_battery, "/api/state": self.api_state, "/api/events": self.api_events, "/api/firmware": self.api_firmware,
+                     "/api/settings": self.api_settings_read, "/api/linux-gamepad": self.api_linux_gamepad, "/api/busy": self.api_busy, "/api/update": self.api_update, "/api/job": self.api_job, "/api/windows-rumble": self.api_windows_rumble}.get(path)
             if route:
                 return route()
+            if path in ("/", "/index.html", "/static/index.html"):
+                return self.send(200, page_html(), TYPES[".html"])
             name = "index.html" if path == "/" else path.lstrip("/").removeprefix("static/")
             f = (STATIC / name).resolve()
             if f.parent == STATIC.resolve() and f.is_file():
                 return self.send(200, f.read_bytes(), TYPES.get(f.suffix, "application/octet-stream"))
             self.send(404, "not found", "text/plain")
+
+        def api_windows_stock_stream(self):
+            if not self.auth():
+                return
+            if sys.platform != "win32":
+                return self.send(404, json.dumps({"error": "Windows only"}))
+            self.protocol_version = "HTTP/1.1"
+            self.connection.settimeout(2)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            deadline = time.monotonic() + 30
+            try:
+                while time.monotonic() < deadline:
+                    state = WINDOWS_STOCK_GAMEPAD.snapshot()
+                    payload = ("data: " + json.dumps(state) + "\n\n").encode()
+                    self.wfile.write(f"{len(payload):x}\r\n".encode() + payload + b"\r\n")
+                    self.wfile.flush()
+                    if state.get("connected") is False:
+                        break
+                    time.sleep(0.016)
+                self.wfile.write(b"0\r\n\r\n")
+                self.wfile.flush()
+            except OSError:
+                pass   # Browser left diagnostics; only read-only input was being streamed.
+
+        def api_windows_stock_gamepad(self):
+            if not self.auth():
+                return
+            if sys.platform != "win32":
+                return self.send(404, json.dumps({"error": "Windows only"}))
+            self.send(200, json.dumps(WINDOWS_STOCK_GAMEPAD.snapshot()))
+
+        def api_windows_battery(self):
+            if not self.auth():
+                return
+            if sys.platform != "win32":
+                return self.send(404, json.dumps({"error": "Windows only"}))
+            self.send(200, json.dumps(windows_battery()))
+
+        def api_windows_rumble(self):
+            if not self.auth():
+                return
+            if sys.platform != "win32":
+                return self.send(404, json.dumps({"error": "Windows only"}))
+            status = HID_RUMBLE.status()
+            self.send(200, json.dumps(status if status['available'] else WINDOWS_RUMBLE.status()))
 
         def api_linux_gamepad(self):
             if not self.auth():
@@ -83,6 +223,18 @@ def make_server(store: Path, port: int = 0):
             if sys.platform != "linux":
                 return self.send(404, json.dumps({"error": "Linux only"}))
             self.send(200, json.dumps(GAMEPAD.snapshot()))
+
+        def api_simulation(self, req=None):
+            if not self.auth(): return
+            if SIMULATION_WORLD is None:
+                return self.send(404, json.dumps({"error": "Simulation is not running"}))
+            if req is not None and runner.running and req.get("action") in ("profile", "connection", "power", "disconnect_usb", "rear_switch", "dongle_usb"):
+                return self.send(409, json.dumps({"error": "Wait for the current operation to finish"}))
+            try:
+                data = SIMULATION_WORLD.control(req) if req is not None else SIMULATION_WORLD.virtual_state()
+                return self.send(200, json.dumps(data))
+            except ValueError as exc:
+                return self.send(400, json.dumps({"error": str(exc)}))
 
         def api_state(self):
             if not self.auth():
@@ -94,19 +246,20 @@ def make_server(store: Path, port: int = 0):
             except Exception as e:
                 found = [{"mode": "error", "name": str(e)}]
             backups = sorted(p.name for p in Path(store).glob("controller-*.bin"))
-            self.send(200, json.dumps({"version": __version__, "accepted": state.accepted(store), "devices": found,
-                                       "backups": backups,
+            self.send(200, json.dumps({"version": __version__, "simulation": bool(os.environ.get("U2C_SIM")), "simulation_controls": SIMULATION_WORLD is not None, "accepted": state.accepted(store), "devices": found,
+                                       "backups": backups, "storage_dir": str(Path(store).resolve()),
                                        "disclaimer": disclaimer.text()}))
 
         def api_battery_log(self):
-            """Read the battery log by cable and save it as CSV in the app's folder, shown in Finder."""
-            if runner.running:
+            """Export the controller's stored battery history over USB, including bootloader mode."""
+            if not runner.claim():
                 return self.send(409, json.dumps({"error": "Another task is running."}))
-            ours = [f for f in cli.find() if f.mode in ("cable", "cable_360")]
-            if len(ours) != 1:
-                return self.send(200, json.dumps({"error": "Connect the controller by cable to save its battery log."}))
             try:
-                ch = cli.open_channel(ours[0].info, 0x81)
+                ours = [f for f in cli.find() if f.mode in ("cable", "cable_360", "cable_dinput", "boot")]
+                if len(ours) != 1:
+                    return self.send(200, json.dumps({"error": "Connect the controller directly by USB (normal or update mode). Its battery log cannot be exported through Bluetooth or the dongle."}))
+                in_boot = ours[0].mode == "boot"
+                ch = cli.open_channel(ours[0].info, 0 if in_boot else 0x81)
                 try:
                     probe._check_device(ch, ours[0].mode, None)
                     rows = battlog.read(ch, ours[0].mode)
@@ -116,46 +269,22 @@ def make_server(store: Path, port: int = 0):
                 return self.send(200, json.dumps({"error": str(e), "permission": True}))
             except (OpError, OSError, ProtocolError) as e:
                 return self.send(200, json.dumps({"error": str(e)}))
+            finally:
+                runner.release()
             if not rows:
                 return self.send(200, json.dumps({"records": 0}))
             path = Path(store) / f"battery-log-{datetime.datetime.now():%Y%m%d-%H%M%S}.csv"
             path.write_text(battlog.csv(rows))
             if sys.platform == "darwin" and not os.environ.get("U2C_SIM"):
                 subprocess.run(["/usr/bin/open", "-R", str(path)], check=False)
-            return self.send(200, json.dumps({"records": len(rows), "summary": battlog.summary(rows), "name": path.name}))
+            return self.send(200, json.dumps({"records": len(rows), "summary": battlog.summary(rows), "name": path.name, "storage_dir": str(Path(store).resolve())}))
 
-        def api_battery(self):
-            """The battery for the Diagnostics tab and the menu bar item: the controller's own reading by cable, or macOS's
-            over Bluetooth when exactly one Xbox-ID pad is connected. {} when there's nothing to read; {"busy": true} while a
-            task or another front end has the controller."""
+        def api_job(self):
             if not self.auth():
                 return
-            found = cli.find()
-            cable = [f for f in found if f.mode in ("cable", "cable_360")]
-            if len(cable) == 1:
-                if not runner.claim():
-                    return self.send(200, json.dumps({"busy": True}))
-                answer = {}
-                try:
-                    ch = cli.open_channel(cable[0].info, 0x81)
-                    try:
-                        if app.open_session(ch) is not None:
-                            probe.check_not_dongle(ch)
-                            reading = app.battery(ch)
-                            answer = {"source": "cable", **reading} if reading else {"source": "cable", "unavailable": True}
-                    finally:
-                        ch.close()
-                except (OpError, PermissionDenied, OSError, ProtocolError):
-                    answer = {}
-                finally:
-                    runner.release()
-                return self.send(200, json.dumps(answer))
-            bluetooth = [f for f in found if f.mode == "bluetooth_xbox"]
-            if len(bluetooth) != 1:
-                return self.send(200, json.dumps({}))
-            name = bluetooth[0].info.name
-            percent = battery_ops.bluetooth_percent(name)
-            return self.send(200, json.dumps({"source": "bluetooth", "name": name, **({"percent": percent} if percent is not None else {})}))
+            job_id = parse_qs(urlparse(self.path).query).get("job", [""])[0]
+            status = runner.status(job_id)
+            self.send(200 if status is not None else 404, json.dumps(status or {"error": "Task status is no longer available."}))
 
         def api_busy(self):
             """For the Mac app's quit and close guard: the server knows, even when the page has lost track."""
@@ -203,7 +332,7 @@ def make_server(store: Path, port: int = 0):
             if not runner.claim():
                 return self.send(409, json.dumps({"error": "Another task is running."}))
             try:
-                ours = [f for f in cli.find() if f.mode in ("cable", "cable_360")]
+                ours = [f for f in cli.find() if f.mode in ("cable", "cable_360", "cable_dinput")]
                 if len(ours) != 1:
                     return self.send(409, json.dumps({"error": "Connect the controller by cable, without other controllers."}))
                 ch = cli.open_channel(ours[0].info, 0x81)
@@ -236,7 +365,7 @@ def make_server(store: Path, port: int = 0):
             if not runner.claim():
                 return answer(note="Another task is running.")
             try:
-                ours = [f for f in cli.find() if f.mode in ("cable", "cable_360")]
+                ours = [f for f in cli.find() if f.mode in ("cable", "cable_360", "cable_dinput")]
                 if len(ours) != 1:
                     return answer(note="Connect the controller by cable to change these settings.")
                 ch = cli.open_channel(ours[0].info, 0x81)
@@ -300,6 +429,8 @@ def make_server(store: Path, port: int = 0):
                 return self.send(200, json.dumps({"error": "More than one device is connected. Unplug all but one controller."}))
             if not ours:
                 note = "Connect it by cable, or put it in update mode."
+                if any(f.mode == "xinput_only" for f in found):
+                    return self.send(200, json.dumps({"note": XINPUT_NOTE}))
                 if any(f.mode.startswith("bluetooth") for f in found):
                     note = "Connect the controller by cable to see or change its firmware."
                 if any(f.mode == "bluetooth_xbox" for f in found):
@@ -314,20 +445,22 @@ def make_server(store: Path, port: int = 0):
             except (OpError, OSError, ProtocolError) as e:
                 return self.send(200, json.dumps({"error": str(e)}))
             try:
-                ch = cli.open_channel(f.info, 0 if f.mode == "boot" else 0x81)
-                try:
-                    fw = probe.read_firmware(ch, f.mode)
-                    here = cli.unit_backups(ch, store, f.mode, whole=False)   # shown only; writes check the bootloader too
-                    pick = bkp.restorable(here)   # what Restore your backup would use
-                finally:
-                    ch.close()
+                fw, here = read_controller_details(f, store)
+                pick = bkp.restorable(here)
                 st, version = fw.state, fw.version
+            except probe.PairedDongle:
+                # Stock XInput receivers use the controller's 2dc8:310a ID.
+                # The read-only memory check has identified the actual device.
+                return self.dongle_report(Found(f.info, "dongle_paired"))
             except PermissionDenied as e:   # the page offers a button to Input Monitoring
                 return self.send(200, json.dumps({"error": str(e), "permission": True}))
             except (OpError, OSError, ProtocolError) as e:
                 return self.send(200, json.dumps({"error": str(e)}))
             keys = shown(st.recipes)
             ring = [recipes.RECIPES[k].title for k in keys if recipes.RECIPES[k].group == "ring"]
+            # Details show the saved startup brightness, which may override the
+            # default compiled into the ring tweak. This is not a live RAM read.
+            ring_title = recipes.RECIPES[recipes.RING_ORDER[fw.ring_level]].title if fw.ring_level is not None else (ring[0] if ring else "Home ring: normal")
             self.send(200, json.dumps({"known": st.known, "recipes": keys, "version": version, "version_from": fw.version_from,
                                        "pending": fw.pending, "boot_identity": fw.boot_identity, "outdated": st.outdated, "update": update_available(st), "ring_level": fw.ring_level,
                                        "restore_backup": pick and {"name": pick.path.name, "taken": bkp.taken(pick.path), "firmware": bkp.describe(pick.state)},
@@ -337,7 +470,7 @@ def make_server(store: Path, port: int = 0):
                                                  for k, r in recipes.RECIPES.items() if r.name},
                                        "tweaks": [{"key": k, "title": recipes.RECIPES[k].title, "on": k in keys}
                                                   for k in shown(k for k, r in recipes.RECIPES.items() if not r.group)]
-                                                 + [{"key": "ring", "title": ring[0] if ring else "Home ring: normal", "on": bool(ring)}]}))
+                                                 + [{"key": "ring", "title": ring_title, "on": bool(ring)}]}))
 
         def dongle_report(self, f, in_boot=False):
             """The dongle, read-only: its firmware, its tweaks, and its backups here."""
@@ -366,24 +499,36 @@ def make_server(store: Path, port: int = 0):
         def api_events(self):
             if not self.auth():
                 return
+            with runner.cond:
+                job_id = parse_qs(urlparse(self.path).query).get("job", [None])[0]
+                if job_id is not None and job_id != runner.job_id:
+                    return self.send(409, json.dumps({"error": "Another task has started."}))
+                events = runner.events
+            self.protocol_version = "HTTP/1.1"
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-store")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.send_header("Connection", "close")
             self.end_headers()
+            def chunk(data):
+                self.wfile.write(f"{len(data):x}\r\n".encode() + data + b"\r\n")
+                self.wfile.flush()
             i = 0
             while True:
                 with runner.cond:
-                    if i >= len(runner.events):
+                    if i >= len(events):
                         runner.cond.wait(timeout=KEEPALIVE_S)
-                    batch = runner.events[i:]
+                    batch = events[i:]
                 if not batch:   # written outside the lock, so a client that stops reading can't hold up the job
-                    self.wfile.write(b": keepalive\n\n"); self.wfile.flush()
+                    chunk(b": keepalive\n\n")
                     continue
                 i += len(batch)
                 for e in batch:
-                    self.wfile.write(f"data: {json.dumps(e)}\n\n".encode())
-                self.wfile.flush()
+                    chunk(f"data: {json.dumps(e)}\n\n".encode())
                 if batch[-1]["type"] in ("done", "error"):
+                    self.wfile.write(b"0\r\n\r\n")
+                    self.wfile.flush()
                     return
 
         def do_POST(self):
@@ -396,6 +541,54 @@ def make_server(store: Path, port: int = 0):
             except ValueError:
                 return self.send(400, json.dumps({"error": "bad request"}))
             route = self.path.split("?")[0]
+            if route == "/api/simulation":
+                return self.api_simulation(req)
+            if route == "/api/open-store":
+                try:
+                    open_store(store)
+                    return self.send(200, json.dumps({"ok": True}))
+                except OSError as exc:
+                    return self.send(422, json.dumps({"error": f"Could not open the folder: {exc}"}))
+            if route == "/api/bluetooth-ring":
+                if sys.platform != "win32":
+                    return self.send(404, json.dumps({"error": "Windows only"}))
+                level, save = req.get("level"), req.get("save", False)
+                if type(level) is not int or level not in (*range(6), 255) or type(save) is not bool:
+                    return self.send(400, json.dumps({"error": "Invalid Home ring request"}))
+                if not runner.claim():
+                    return self.send(409, json.dumps({"error": "Another task is running."}))
+                try:
+                    from ..transport.windows import set_bluetooth_ring
+                    set_bluetooth_ring(level, save)
+                    return self.send(200, json.dumps({"ok": True}))
+                except (OSError, RuntimeError, ValueError) as exc:
+                    return self.send(422, json.dumps({"error": str(exc)}))
+                finally:
+                    runner.release()
+            if route == "/api/windows-rumble/stop":
+                if sys.platform != "win32":
+                    return self.send(404, json.dumps({"error": "Windows only"}))
+                if req.get('kind') == 'vendor':
+                    return self.send(200, json.dumps(HID_RUMBLE.stop()))
+                if type(req.get("index")) is not int or not 0 <= req["index"] < 4:
+                    return self.send(400, json.dumps({"error": "Invalid controller index"}))
+                result = WINDOWS_RUMBLE.stop(req["index"])
+                return self.send(200 if result["ok"] else 422, json.dumps(result))
+            if route == "/api/windows-rumble":
+                if sys.platform != "win32":
+                    return self.send(404, json.dumps({"error": "Windows only"}))
+                vendor = req.get('kind') == 'vendor'
+                if (not vendor and (type(req.get("index")) is not int or not 0 <= req["index"] < 4)) or req.get("locality") not in ("default", "left", "right"):
+                    return self.send(400, json.dumps({"error": "Invalid vibration request"}))
+                if "expires" in req and (type(req["expires"]) is not int or req["expires"] < time.time() * 1000):
+                    return self.send(408, json.dumps({"error": "Vibration request expired; try again."}))
+                if not runner.claim():
+                    return self.send(409, json.dumps({"error": "Another task is running."}))
+                try:
+                    result = HID_RUMBLE.rumble(req["locality"]) if vendor else WINDOWS_RUMBLE.rumble(req["index"], req["locality"])
+                    return self.send(200 if result["ok"] else 422, json.dumps(result))
+                finally:
+                    runner.release()
             if route == "/api/linux-gamepad/rumble":
                 if sys.platform != "linux":
                     return self.send(404, json.dumps({"error": "Linux only"}))
@@ -428,11 +621,12 @@ def make_server(store: Path, port: int = 0):
                                                         force_unknown=bool(req.get("force_unknown"))))}.get(route)
             if params is None:
                 return self.send(404, json.dumps({"error": "unknown call"}))
-            if not runner.start(params[0], **params[1]):
+            job_id = runner.start(params[0], **params[1])
+            if not job_id:
                 return self.send(409, json.dumps({"error": "Another task is running."}))
-            self.send(202, json.dumps({"started": params[0]}))
+            self.send(202, json.dumps({"started": params[0], "job": job_id}))
 
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    httpd = LocalHTTPServer(("127.0.0.1", port), Handler)
     httpd.runner = runner
     return httpd, token
 
@@ -440,13 +634,9 @@ def make_server(store: Path, port: int = 0):
 def serve(store: Path, port: int = 0) -> None:
     httpd, token = make_server(store, port)
     page = os.environ.get("U2C_PAGE_QUERY", "") if os.environ.get("U2C_SIM") else ""   # macos/preview.sh: the page simulator, never with real devices
-    url = f"http://127.0.0.1:{httpd.server_address[1]}/?token={token}{page}"
-    print(f"U2C_URL {url}", flush=True)
+    print(f"U2C_URL http://127.0.0.1:{httpd.server_address[1]}/?token={token}{page}", flush=True)
     if os.environ.get("U2C_EXIT_ON_EOF"):   # started by the Mac app, which holds our stdin open while it lives
         threading.Thread(target=exit_when_orphaned, args=(httpd.runner,), daemon=True).start()
-    elif should_open_browser():
-        print("Opening the app in your browser. If it doesn't open, open the address above, with its token.", flush=True)
-        threading.Thread(target=webbrowser.open, args=(url,), daemon=True).start()   # a console browser waits until it ends
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
@@ -458,12 +648,6 @@ def serve(store: Path, port: int = 0) -> None:
                 print("Waiting for the current operation to finish...", flush=True)
             httpd.runner.cond.wait_for(lambda: not httpd.runner.running)
         httpd.server_close()
-
-
-def should_open_browser() -> bool:
-    """Started by hand (on Linux, or with python -m on a Mac): open the page with its token, which is easy to leave out
-    when copying the address. Not under the Mac app, which shows it itself, nor in the simulation the tests drive."""
-    return not os.environ.get("U2C_EXIT_ON_EOF") and not os.environ.get("U2C_SIM") and not os.environ.get("U2C_NO_BROWSER")
 
 
 def exit_when_orphaned(runner, stdin=None, wait: float = 1.0, exit=os._exit) -> None:

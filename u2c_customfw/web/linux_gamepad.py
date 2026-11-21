@@ -20,6 +20,15 @@ AXES = {"ABS_X": "lx", "ABS_Y": "ly", "ABS_RX": "rx", "ABS_RY": "ry",
 HID_AXES = {"ABS_X": "lx", "ABS_Y": "ly", "ABS_Z": "rx", "ABS_RZ": "ry",
             "ABS_BRAKE": "lt", "ABS_GAS": "rt", "ABS_HAT0X": "hatx", "ABS_HAT0Y": "haty"}
 
+def _dinput(dev):
+    info=getattr(dev,'info',None)
+    return getattr(info,'vendor',None)==0x2dc8 and getattr(info,'product',None) in (0x301b,0x301c,0x301d)
+
+def _category(dev):
+    if not _dinput(dev):return 'Linux evdev'
+    info=dev.info
+    return ('2.4 GHz dongle' if info.product==0x301c else 'Bluetooth' if info.bustype==5 else 'USB')+' · D-input'
+
 class Gamepad:
     def __init__(self):
         self.lock = threading.Lock()
@@ -60,6 +69,7 @@ class Gamepad:
                     if self.device is not dev: break
                     if event.type == ecodes.EV_KEY:
                         name = BUTTON_CODES.get(event.code)
+                        if _dinput(dev) and event.code in (ecodes.BTN_C,ecodes.BTN_Z):name="L4" if event.code==ecodes.BTN_C else "R4"
                         if name:
                             (self.pressed.add if event.value else self.pressed.discard)(name)
                     elif event.type == ecodes.EV_ABS:
@@ -147,7 +157,7 @@ class Gamepad:
                     rumble = False
                 return {
                     "type": "input", "connected": True,
-                    "name": dev.name, "category": "Linux evdev",
+                    "name": dev.name, "category": _category(dev),
                     "localities": (["default", "left", "right"] if rumble else []),
                     "extended": True, "foreground": True,
                     "battery": {"level": -1, "state": "unknown"},
@@ -195,6 +205,6 @@ class Gamepad:
                 rumble = False
             self.worker = threading.Thread(target=self._loop, args=(dev,), daemon=True)
             self.worker.start()
-        return {"type": "state", "connected": True, "name": dev.name, "category": "Linux evdev", "localities": (["default", "left", "right"] if rumble else []), "extended": True, "foreground": True, "battery": {"level": -1, "state": "unknown"}}
+        return {"type": "state", "connected": True, "name": dev.name, "category": _category(dev), "localities": (["default", "left", "right"] if rumble else []), "extended": True, "foreground": True, "battery": {"level": -1, "state": "unknown"}}
 
 GAMEPAD = Gamepad()

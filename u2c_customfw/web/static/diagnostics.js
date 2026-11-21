@@ -9,7 +9,7 @@ const IDLE_LINE = "Vibrates for under a second. Nothing is written to the contro
 let testVisible = false, testConnected = null, testState = null, testSeen = new Set(), testName = null, testMounted = null, testPending = null, testTimer = null, testId = 0;
 // On Linux, poll evdev input and use a separate authenticated endpoint for bounded force feedback. Retain macOS native bridge.
 let linuxPoll = null, linuxLastConnected = false, linuxTickBusy = false;
-const SYSTEM = navigator.platform.startsWith("Linux") ? "Linux" : "macOS";   // what the texts below call the system
+const SYSTEM = navigator.platform.startsWith("Win") ? "Windows" : navigator.platform.startsWith("Linux") ? "Linux" : "macOS";
 const linuxBridge = { postMessage(m) {
   if (m.op === "start") {
     if (linuxPoll) clearInterval(linuxPoll);
@@ -49,7 +49,277 @@ async function linuxTick() {
     linuxTickBusy = false;
   }
 }
-const bridge = () => window.u2cSimBridge || (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.diagnostics) || (navigator.platform.startsWith("Linux") ? linuxBridge : null);  // the simulator's, then the Mac app's
+// Windows browsers expose XInput and HID gamepads without opening the firmware interface.
+let windowsPoll = null;
+let windowsRumblePoll = null, windowsNativeRumble = null, windowsRumbleBusy = false;
+let windowsNativeActive = null;
+let windowsBatteryPoll = null, windowsBatteryBusy = false, windowsBatteryPad = null;
+let windowsBattery = { level: -1, state: "unknown" };
+let windowsStockState = null, windowsStockPad = null, windowsStockAt = 0;
+let windowsStockStream = null, windowsStockRetryAt = 0;
+function stopWindowsStockStream() {
+  windowsStockStream?.abort();
+  windowsStockStream = null;
+}
+function acceptWindowsStockState(p, state) {
+  if (!windowsPoll || windowsPad()?.id !== p.id) return;
+  if (state.available) {
+    windowsStockState = state;
+    windowsStockPad = p.id;
+    windowsStockAt = Date.now();
+  } else if (state.connected === false) {
+    windowsStockState = null;
+    windowsStockPad = null;
+  }
+}
+async function streamWindowsStock(p) {
+  if (!windowsPoll || windowsStockStream || Date.now() < windowsStockRetryAt || document.hidden) return;
+  const control = windowsStockStream = new AbortController();
+  let reader, watchdog = setTimeout(() => control.abort(), 2000);
+  try {
+    const response = await fetch("/api/windows-stock-stream?token=" + encodeURIComponent(token), {signal: control.signal, cache: "no-store"});
+    if (!response.ok || !response.body) throw new Error("Input stream unavailable");
+    reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (!control.signal.aborted) {
+      const {value, done} = await reader.read();
+      if (done) break;
+      clearTimeout(watchdog); watchdog = setTimeout(() => control.abort(), 2000);
+      buffer += decoder.decode(value, {stream: true});
+      let index;
+      while ((index = buffer.indexOf("\n\n")) >= 0) {
+        const packet = buffer.slice(0, index); buffer = buffer.slice(index + 2);
+        if (!packet.startsWith("data: ")) continue;
+        if (control !== windowsStockStream || windowsPad()?.id !== p.id) return;
+        acceptWindowsStockState(p, JSON.parse(packet.slice(6)));
+        windowsTick();  // Paint the new report immediately, not at the next polling tick.
+      }
+    }
+  } catch (_) { /* Reconnect without clearing the last valid sample. */ }
+  finally {
+    clearTimeout(watchdog);
+    if (reader) { reader.cancel().catch(() => {}); reader.releaseLock(); }
+    if (windowsStockStream === control) {
+      windowsStockStream = null;
+      windowsStockRetryAt = Date.now() + 200;
+    }
+  }
+}
+const windowsPads = () => Array.from(navigator.getGamepads ? navigator.getGamepads() : []).filter(p => p && p.connected);
+const windowsPad = () => windowsPads().find(p => p.mapping === "standard") || windowsPads()[0];
+function mapUltimate2cBluetooth(p) {
+  // SDL's 2dc8:301b button map; axes here use the browser's HID usage slots,
+  // not SDL's axis indices. Firefox exposes X/Y/Z/Rx/Ry/Rz ... Hat as 0..9.
+  // Reference: libsdl-org/SDL SDL2/src/joystick/SDL_gamecontrollerdb.h.
+  const id = p.id.toLowerCase();
+  const known = /vendor:\s*2dc8\s+product:\s*301[bcd]/.test(id) || /2dc8[-:]301[bcd]/.test(id)
+    || id.includes("8bitdo ultimate 2c wireless");
+  if (p.mapping === "standard" || !known || p.axes.length !== 10 || p.buttons.length < 15) return null;
+  const axis = i => Math.max(-1, Math.min(1, p.axes[i] || 0));
+  const pressed = [];
+  const buttons = {0: "A", 1: "B", 2: "L4", 5: "R4", 3: "X", 4: "Y", 6: "LB", 7: "RB", 10: "View", 11: "Menu", 12: "Home", 13: "L3", 14: "R3"};
+  for (const [index, name] of Object.entries(buttons)) if (p.buttons[index]?.pressed || p.buttons[index]?.value > .5) pressed.push(name);
+  // Digital presses can highlight the controls, but are not analog travel:
+  // they switch to 1 before a trigger reaches the end of its physical range.
+  const lt = 0, rt = 0;
+  if (p.buttons[8]?.pressed || p.buttons[8]?.value > .5) pressed.push("LT");
+  if (p.buttons[9]?.pressed || p.buttons[9]?.value > .5) pressed.push("RT");
+  // Hat values 0..7 are scaled to -1..1; neutral 15 becomes 3.286.
+  const hat = p.axes[9];
+  if (Number.isFinite(hat) && hat >= -1.01 && hat <= 1.01) {
+    const direction = Math.round((hat + 1) * 3.5);
+    const directions = [["Up"], ["Up", "Right"], ["Right"], ["Down", "Right"], ["Down"], ["Down", "Left"], ["Left"], ["Up", "Left"]];
+    if (directions[direction]) pressed.push(...directions[direction]);
+  }
+  return {name: "8BitDo Ultimate 2C Wireless Controller", category: windowsCategory(p, "D-input"), extended: true, raw: false,
+    pressed, lx: axis(0), ly: -axis(1), rx: axis(2), ry: -axis(5), lt, rt, analogTriggers: false};
+}
+async function windowsBatteryStatus() {
+  const p = windowsPad();
+  if (windowsBatteryBusy || !p || document.hidden) return;
+  windowsBatteryBusy = true;
+  windowsBatteryPad = p.id;
+  try {
+    const result = await api("GET", "/api/windows-battery", undefined, AbortSignal.timeout(2000));
+    if (windowsPoll && windowsPad()?.id === p.id) windowsBattery = result;
+  } catch (_) { /* Keep the last reading until a successful refresh or disconnect. */ }
+  finally { windowsBatteryBusy = false; }
+}
+const windowsActuator = () => typeof windowsPad()?.vibrationActuator?.playEffect === "function" ? windowsPad().vibrationActuator : null;
+const windowsNativeTarget = () => {
+  if (!windowsNativeRumble || windowsPads().length !== 1) return null;
+  if (windowsNativeRumble.kind === 'vendor') {
+    const product=windowsNativeRumble.product.toString(16);
+    const category=windowsCategory(windowsPad());
+    if (windowsNativeRumble.transport === 'Bluetooth' && !category.startsWith('Bluetooth')) return null;
+    if (windowsNativeRumble.transport === 'USB' && category.startsWith('Bluetooth')) return null;
+    return new RegExp('vendor:\\s*2dc8\\s+product:\\s*'+product+'|2dc8[-:]'+product,'i').test(windowsPad().id) ? windowsNativeRumble : null;
+  }
+  return windowsPad().mapping === 'standard' ? windowsNativeRumble : null;
+};
+function windowsStopRumble() {
+  if (typeof st !== "undefined" && st && st.simulation) return;
+  windowsPad()?.vibrationActuator?.reset()?.catch(() => {});
+  const active = windowsNativeActive;
+  if (active) {
+    windowsNativeActive = null;
+    fetch("/api/windows-rumble/stop", { method: "POST", keepalive: true, headers: { "X-Token": token, "Content-Type": "application/json" }, body: JSON.stringify({ index: active.index, kind: active.kind }) }).catch(() => {});
+  }
+}
+window.addEventListener?.("pagehide", () => { if (SYSTEM === "Windows") windowsStopRumble(); });
+document.addEventListener?.("visibilitychange", () => { if (SYSTEM === "Windows" && document.hidden) { windowsStopRumble(); stopWindowsStockStream(); } });
+async function windowsRumbleStatus() {
+  if (windowsRumbleBusy || windowsNativeActive || document.hidden) return;
+  windowsRumbleBusy = true;
+  try {
+    const r = await fetch("/api/windows-rumble", { signal: AbortSignal.timeout(1500), headers: { "X-Token": token } });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const status = await r.json();
+    if (windowsPoll) windowsNativeRumble = status.available ? status : null;
+  } catch (_) { /* Retain capability on a transient failure; POST rechecks the actual slot. */ }
+  finally { windowsRumbleBusy = false; }
+}
+function windowsCategory(p, inputMode = null) {
+  // USB descriptors can belong to either the controller or its receiver.
+  // Wait for identification before presenting a transport as confirmed.
+  if ((typeof reading !== "undefined" && reading) ||
+      (typeof refreshing !== "undefined" && refreshing) ||
+      (typeof fw !== "undefined" && !fw)) return "Identifying connection…";
+  if (typeof fw !== "undefined" && fw && fw.error) return "Connection unavailable";
+  const id = p.id.toLowerCase();
+  if (/vendor:\s*2dc8\s+product:\s*301d|2dc8[-:]301d/.test(id)) return "USB · D-input";
+  if (/vendor:\s*2dc8\s+product:\s*301b|2dc8[-:]301b/.test(id)) {
+    const matches = typeof st === 'undefined' ? [] : (st.devices || []).filter(d => ['cable_dinput','bluetooth'].includes(d.mode));
+    return matches.length === 1 ? (matches[0].mode === 'cable_dinput' ? 'USB · D-input' : 'Bluetooth · D-input') : 'Gamepad · D-input';
+  }
+  if (/vendor:\s*2dc8\s+product:\s*301c|2dc8[-:]301c/.test(id)) return "2.4 GHz dongle · D-input";
+  if (/vendor:\s*045e\s+product:\s*0b13|045e[-:]0b13/.test(id)) return "Bluetooth · XInput";
+  // Associate the browser input with transport metadata only when unambiguous.
+  const devices = typeof st === "undefined" ? [] : (st.devices || []).filter(d =>
+    ["cable", "cable_360", "cable_dinput", "dongle_paired", "bluetooth", "bluetooth_xbox", "xinput_only"].includes(d.mode));
+  if (windowsPads().length === 1 && devices.length === 1) {
+    const mode = devices[0].mode;
+    if (mode === "cable_dinput") return "USB · D-input";
+    if (mode === "bluetooth") return "Bluetooth · D-input";
+    if (mode === "bluetooth_xbox") return "Bluetooth · XInput";
+    if (mode === "dongle_paired") return "2.4 GHz dongle · " + (inputMode || "XInput");
+    if (mode === "cable" || mode === "cable_360") return "USB · " + (inputMode || "XInput");
+    // An input-only Xbox identity cannot distinguish cable from receiver.
+  }
+  return inputMode ? "Gamepad · " + inputMode : "Gamepad";
+}
+function windowsModelName(p) {
+  if (/8bitdo ultimate 2c|vendor:\s*2dc8\s+product:\s*(301b|301c|301d|310a)|2dc8[-:](301b|301c|301d|310a)/i.test(p.id))
+    return "8BitDo Ultimate 2C Wireless Controller";
+  // Generic XInput names identify an API, not a model. Only replace one when
+  // the single input device can be associated with an actual 8BitDo HID name.
+  if (windowsPads().length === 1 && /xbox|xinput|standard gamepad|045e/i.test(p.id) && typeof st !== "undefined" &&
+      (st.devices || []).filter(d => /8bitdo ultimate 2c/i.test(d.name || "")).length === 1)
+    return "8BitDo Ultimate 2C Wireless Controller";
+  return p.id;
+}
+function windowsTick() {
+  const p = windowsPad();
+  if (!p) {
+    stopWindowsStockStream();
+    windowsBatteryPad = null; windowsBattery = { level: -1, state: "unknown" };
+    windowsStockState = null; windowsStockPad = null;
+    window.u2cDiagnostics({ type: "state", connected: false, error: "Connect the controller and press a button while this page is focused." });
+    return;
+  }
+  if (windowsBatteryPad !== p.id) {
+    windowsBattery = { level: -1, state: "unknown" };
+    windowsBatteryStatus();
+  }
+  const names = ["A", "B", "X", "Y", "LB", "RB", "LT", "RT", "View", "Menu", "L3", "R3", "Up", "Down", "Left", "Right", "Home"];
+  const e = { connected: true, name: windowsModelName(p), category: windowsCategory(p), extended: p.mapping === "standard", raw: p.mapping !== "standard",
+    rawAxes: Array.from(p.axes), rawButtons: Array.from(p.buttons, button => button.value),
+    foreground: document.hasFocus(), localities: windowsNativeTarget() || windowsActuator() ? ["default", "left", "right"] : [],
+    battery: windowsBatteryPad === p.id && windowsPads().length === 1 ? windowsBattery : { level: -1, state: "unknown" }, pressed: p.mapping === "standard" ? names.filter((_, i) => p.buttons[i]?.pressed) : [],
+    lx: p.axes[0] || 0, ly: -(p.axes[1] || 0), rx: p.axes[2] || 0, ry: -(p.axes[3] || 0),
+    lt: p.buttons[6]?.value || 0, rt: p.buttons[7]?.value || 0 };
+  const mapped = mapUltimate2cBluetooth(p);
+  if (mapped) {
+    Object.assign(e, mapped);
+    // Preserve the last analog sample while the continuous stream reconnects;
+    // do not replace fresh browser buttons/sticks.
+    if (windowsStockPad === p.id && windowsStockState && Date.now() - windowsStockAt <= 3000) {
+      e.lt = windowsStockState.lt; e.rt = windowsStockState.rt;
+      e.analogTriggers = true;
+      e.pressed = e.pressed.filter(name => name !== "LT" && name !== "RT");
+      if (e.lt > TRIGGER_SEEN) e.pressed.push("LT");
+      if (e.rt > TRIGGER_SEEN) e.pressed.push("RT");
+    }
+  }
+  if (mapped || /D-input/.test(e.category)) {
+    // Chromium can map the standard controls but omit the two vendor paddles.
+    // Read their physical report bits through the same read-only HID stream.
+    if (windowsStockPad === p.id && windowsStockState && Date.now()-windowsStockAt <= 3000) {
+      e.pressed=e.pressed.filter(name=>name!=="L4" && name!=="R4");
+      e.pressed.push(...(windowsStockState.pressed || []).filter(name=>name==="L4" || name==="R4"));
+    }
+    streamWindowsStock(p);
+  } else {
+    stopWindowsStockStream();
+  }
+  window.u2cDiagnostics({ ...e, type: "state" });
+  window.u2cDiagnostics({ ...e, type: "input" });
+}
+const windowsBridge = { postMessage(m) {
+  if (m.op === "ring") {
+    fetch("/api/bluetooth-ring", { method: "POST", headers: { "X-Token": token, "Content-Type": "application/json" }, body: JSON.stringify({ level: m.level, save: m.save }) })
+      .then(async response => { const result = await response.json(); window.u2cDiagnostics({ type: "result", op: "ring", id: m.id, ok: response.ok && !!result.ok, error: result.error }); })
+      .catch(error => window.u2cDiagnostics({ type: "result", op: "ring", id: m.id, ok: false, error: String(error) }));
+  } else if (m.op === "start") {
+    clearInterval(windowsPoll);
+    windowsPoll = setInterval(windowsTick, 16);
+    clearInterval(windowsRumblePoll);
+    windowsRumblePoll = setInterval(windowsRumbleStatus, 1000);
+    windowsRumbleStatus();
+    clearInterval(windowsBatteryPoll);
+    windowsBatteryPoll = setInterval(windowsBatteryStatus, 10000);
+    windowsTick();
+  } else if (m.op === "stop") {
+    stopWindowsStockStream();
+    clearInterval(windowsPoll); windowsPoll = null;
+    windowsStockState = null; windowsStockPad = null;
+    clearInterval(windowsBatteryPoll); windowsBatteryPoll = null;
+    windowsBatteryPad = null; windowsBattery = { level: -1, state: "unknown" };
+    clearInterval(windowsRumblePoll); windowsRumblePoll = null; windowsNativeRumble = null;
+    windowsStopRumble();
+  } else if (m.op === "vibrate") {
+    const actuator = windowsActuator();
+    const target = windowsNativeTarget();
+    const native = target?.kind === 'vendor' || !actuator ? target : null;
+    if (native) {
+      if (windowsNativeActive) {
+        window.u2cDiagnostics({ type: "result", id: m.id, ok: false, error: "A vibration test is already running." });
+        return;
+      }
+      const active = windowsNativeActive = { index: native.index, kind: native.kind, id: m.id };
+      fetch("/api/windows-rumble", { method: "POST", signal: AbortSignal.timeout(2500), headers: { "X-Token": token, "Content-Type": "application/json" }, body: JSON.stringify({ index: native.index, kind: native.kind, locality: m.locality, expires: Date.now() + 1500 }) })
+        .then(async response => { const result = await response.json(); window.u2cDiagnostics({ type: "result", id: m.id, ok: response.ok && !!result.ok, error: result.error }); })
+        .catch(error => { if (windowsNativeActive === active) windowsStopRumble(); window.u2cDiagnostics({ type: "result", id: m.id, ok: false, error: String(error) }); })
+        .finally(() => { if (windowsNativeActive === active) windowsNativeActive = null; });
+      return;
+    }
+    if (!actuator || !["default", "left", "right"].includes(m.locality)) {
+      window.u2cDiagnostics({ type: "result", id: m.id, ok: false, error: "Vibration is unavailable for this controller or browser." });
+      return;
+    }
+    actuator.playEffect("dual-rumble", { duration: 450, startDelay: 0,
+      strongMagnitude: m.locality === "right" ? 0 : 0.3, weakMagnitude: m.locality === "left" ? 0 : 0.3 })
+      .then(result => window.u2cDiagnostics({ type: "result", id: m.id, ok: result === "complete", error: result === "complete" ? null : "Vibration interrupted." }))
+      .catch(error => window.u2cDiagnostics({ type: "result", id: m.id, ok: false, error: String(error) }));
+  } else if (m.op === "direct") {
+    window.u2cDiagnostics({ type: "result", id: m.id, ok: false, error: "Direct Bluetooth reports are unavailable in browser diagnostics." });
+  }
+}};
+const firmwareLabBridge = {postMessage(m) {
+  if (typeof simulationMessage === "function") simulationMessage(m);
+}};
+const bridge = () => window.u2cSimBridge || (typeof st !== "undefined" && st && st.simulation ? firmwareLabBridge : null) || (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.diagnostics) || (SYSTEM === "Windows" ? windowsBridge : SYSTEM === "Linux" ? linuxBridge : null);
 
 function clearPending() {
   clearTimeout(testTimer);
@@ -90,7 +360,7 @@ const TEST_MESSAGES = {
   web: "The controller test is only available in the Mac app. Everything else in this tab works here.",
   busy: "The controller test is unavailable while a task is running.",
   boot: "The controller test can't run in update mode. Disconnect the controller and connect it again by Bluetooth or cable.",
-  none: "No controller found. Connect the controller by Bluetooth or cable to test it.",
+  none: SYSTEM === "Windows" ? "Connect the controller, focus this page and press a button to test it." : "No controller found. Connect the controller by Bluetooth or cable to test it.",
   noext: `${SYSTEM} sees this controller, but not as a standard gamepad, so its controls can't be tested here.`,
   background: `The controller test is paused, because ${SYSTEM} only sends controller input to the app in front.`,
 };
@@ -102,9 +372,15 @@ function diagnosticsRender() {
   if (!body || !testVisible) return;
   if (byCable() !== cableAsked) { cableAsked = byCable(); if (cableAsked) readCableBattery(); else cableBattery = null; }
   const mode = testMode();
-  const key = mode === "live" ? `live:${testState.name}:${testState.category}:${testState.localities.join()}:${directLine()}` : mode;
+  const key = mode === "live" ? `live:${testState.name}:${testState.category}:${testState.localities.join()}:${directLine()}` : mode === "noext" && testState.raw ? `raw:${testState.name}` : mode;
   if (key === testMounted) return;
   testMounted = key;
+  if (mode === "noext" && testState.raw && SYSTEM === "Windows") {
+    body.innerHTML = `<div class="test"><div><h3 id="test-raw-name"></h3><p>This controller is detected without a standard button mapping. Raw button numbers and axis values are shown below; they are not assigned Xbox button names.</p><p id="test-raw-buttons"></p><p id="test-raw-axes"></p><p id="test-battery"></p></div></div>`;
+    $("test-raw-name").textContent = testState.name;
+    paintRawInput(testState);
+    return;
+  }
   if (mode !== "live") {
     body.innerHTML = `<div class="test"><div class="test-pic dimmed">${pad(null, false, "test-g")}</div><div class="boot"><div id="test-message"></div></div></div>`;
     $("test-message").textContent = TEST_MESSAGES[mode];
@@ -113,10 +389,15 @@ function diagnosticsRender() {
   mountLive(body);
 }
 
-const directAvailable = () => !!st && st.devices.some((d) => d.mode === "bluetooth_xbox");
+function paintRawInput(event) {
+  $("test-raw-buttons").textContent = "Buttons: " + (event.rawButtons || []).map((value, i) => `${i + 1}: ${value.toFixed(2)}`).join(" · ");
+  $("test-raw-axes").textContent = "Axes: " + (event.rawAxes || []).map((value, i) => `${i + 1}: ${value.toFixed(3)}`).join(" · ");
+}
 
-const directLine = () => directAvailable() ? IDLE_LINE
-  : st && st.devices.some((d) => d.mode === "bluetooth") ? "The direct report needs the Xbox Series X|S controller tweak."
+const directAvailable = () => SYSTEM !== "Windows" && !!st && st.devices.some((d) => d.mode === "bluetooth_xbox");
+
+const directLine = () => SYSTEM === "Windows" ? "Direct Bluetooth reports are unavailable in browser diagnostics." : directAvailable() ? IDLE_LINE
+  : st && st.devices.some((d) => d.mode === "bluetooth") ? "The direct report needs the XInput mode over Bluetooth tweak."
   : "The direct report only works over Bluetooth.";
 
 function batteryText(b) {  // macOS defaults to level 0 and an unknown state when it has nothing to report
@@ -154,18 +435,19 @@ function vibrationText(localities) {
   return localities.includes("left") && localities.includes("right") ? "Available, also on the left and right sides separately" : "Available";
 }
 
+function testControls() { return /D-input/i.test(testState?.category || "") ? [...CONTROLS,"L4","R4"] : CONTROLS; }
 function mountLive(body) {
   const s = testState, has = (l) => s.localities.includes(l), direct = directAvailable();
   const button = (op, label, ok) => `<button class="sec small" data-op="${op}" data-was="${ok ? "" : "1"}"${ok && !testPending ? "" : " disabled"}>${label}</button>`;
   body.innerHTML = `<div class="test"><div class="test-pic" id="test-pic">${pad(ACCENT, false, "test-g")}</div><div>
-    <dl class="rows"><dt>${SYSTEM} sees</dt><dd id="test-name"></dd><dt>Category</dt><dd id="test-category"></dd><dt>Vibration</dt><dd id="test-vibration"></dd><dt>Battery</dt><dd id="test-battery"></dd></dl>
-    <div class="rum">${button("default", "Vibrate Like a Game", has("default"))}${button("left", "Left Motor", has("left"))}${button("right", "Right Motor", has("right"))}${button("direct", "Direct Report", direct)}</div>
+    <dl class="rows"><dt>${SYSTEM} sees</dt><dd id="test-name"></dd><dt>Connection</dt><dd id="test-category"></dd><dt>Vibration</dt><dd id="test-vibration"></dd><dt>Battery</dt><dd id="test-battery"></dd></dl>
+    <div class="rum">${button("default", SYSTEM === "Windows" && windowsNativeTarget()?.kind === "vendor" ? "Test Both Motors" : "Vibrate Like a Game", has("default"))}${button("left", "Left Motor", has("left"))}${button("right", "Right Motor", has("right"))}${button("direct", "Direct Report", direct)}</div>
     <p class="res" id="test-res"></p></div></div>
     <p class="count" id="test-count"></p>
-    <div class="seen" id="test-seen">${CONTROLS.map((c) => `<span data-c="${c}">${CONTROL_LABELS[c] || c}</span>`).join("")}</div>
-    <div class="tg"><div>LT<i><i id="test-lt"></i></i></div><div>RT<i><i id="test-rt"></i></i></div></div>`;
+    <div class="seen" id="test-seen">${testControls().map((c) => `<span data-c="${c}">${CONTROL_LABELS[c] || c}</span>`).join("")}</div>
+    <div class="tg"><div>LT<i><i id="test-lt"></i></i></div><div>RT<i><i id="test-rt"></i></i></div></div><p class="hint" id="test-trigger-note" hidden></p>`;
   $("test-name").textContent = s.name;
-  $("test-category").textContent = `${s.category}, with an extended gamepad`;
+  $("test-category").textContent = s.category;
   $("test-vibration").textContent = vibrationText(s.localities);
   $("test-res").textContent = directLine();
   paintBattery();
@@ -177,7 +459,7 @@ function mountLive(body) {
 function paintSeen() {
   document.querySelectorAll("#test-seen [data-c]").forEach((e) => e.classList.toggle("s", testSeen.has(e.dataset.c)));
   const count = $("test-count");
-  if (count) count.innerHTML = `<b>${testSeen.size} of ${CONTROLS.length}</b> controls checked. Press each one to check it.`;
+  if (count) count.innerHTML = `<b>${testControls().filter(c => testSeen.has(c)).length} of ${testControls().length}</b> controls checked. Press each one to check it.`;
 }
 
 function paintInput(e) {
@@ -193,8 +475,20 @@ function paintInput(e) {
     }
   });
   document.querySelectorAll("#test-seen [data-c]").forEach((el) => el.classList.toggle("now", pressed.has(el.dataset.c)));
-  $("test-lt").style.width = `${Math.round(e.lt * 100)}%`;
-  $("test-rt").style.width = `${Math.round(e.rt * 100)}%`;
+  paintTriggers(e);
+}
+
+function paintTriggers(e) {
+  const analog = e.analogTriggers !== false;
+  for (const key of ["lt", "rt"]) {
+    const value = analog ? Math.max(0, Math.min(1, e[key] || 0)) : 0;
+    $("test-" + key).style.width = `${Math.round(value * 100)}%`;
+  }
+  const note = $("test-trigger-note");
+  if (note) {
+    note.hidden = analog;
+    note.textContent = analog ? "" : "Analog trigger readout unavailable. Digital presses are detected, but do not show how far the trigger is pressed.";
+  }
 }
 
 function vibrate(op) {
@@ -225,10 +519,12 @@ window.u2cDiagnostics = (e) => {
     if (e.connected && testName && e.name !== testName) testSeen = new Set();
     if (e.connected) testName = e.name;
     testState = e;
-    if (testConnected !== null && testConnected !== !!e.connected && !busy) refresh();
+    if (testConnected !== null && testConnected !== !!e.connected && !busy && !(st && st.simulation_controls)) refresh();
     testConnected = !!e.connected;
     diagnosticsRender();
     paintBattery();
+  } else if (e.type === "input" && e.raw && testMode() === "noext") {
+    paintRawInput(e);
   } else if (e.type === "input" && testMode() === "live" && $("test-lt")) {
     for (const p of e.pressed || []) testSeen.add(p);
     if (Math.hypot(e.lx, e.ly) > STICK_SEEN) testSeen.add("LS");

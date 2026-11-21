@@ -143,6 +143,9 @@ def install(store, unknown: bool = False) -> None:
     flash[image.BASE:image.BANK_A_END] = stock
     for a in range(image.CONFIG_START, image.FLASH_SIZE, 0x1000):
         flash[a:a + 64] = rnd.randbytes(64)
+    flash[image.SETTINGS + 5] = 0  # stock USB mode: XInput
+    flash[image.SETTINGS + 6] = 0
+    flash[image.SETTINGS + 17:image.SETTINGS + 25] = bytes(8)
     whole = recipes.whole(stock)
     consts = (hashlib.sha256(stock).hexdigest(),
               {(e.addr, e.size): hashlib.sha256(whole[e.addr - image.BASE:e.addr - image.BASE + e.size]).hexdigest()

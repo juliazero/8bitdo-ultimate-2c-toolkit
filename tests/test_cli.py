@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import contextlib
 import io
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -109,6 +110,7 @@ class CliTest(unittest.TestCase):
         self.assertTrue(text.rstrip().endswith("Installed. The controller hasn't come back yet: if macOS asks whether to allow the accessory to connect, allow it. "
                                                "Otherwise unplug the controller, hold Home for about 12 seconds until it turns off, then connect it again. If you changed a Bluetooth tweak, remove the controller in System Settings → Bluetooth and pair it again."), text)
 
+    @unittest.skipIf(sys.platform == "win32", "Windows uses NTFS permissions, not POSIX mode bits")
     def test_store_is_created_private(self):   # backups hold the pairings and calibration
         for make in (state.accept, state.lock_device):
             store = self.tmp / make.__name__

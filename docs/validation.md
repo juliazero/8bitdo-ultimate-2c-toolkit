@@ -280,53 +280,8 @@ rest through the core of the built 1.2.0 beta 1 app, with the requests its page 
 6. **The core stays up** across four restarts of the controller after writes. Before the IOHIDLib fix, the command line's
    core crashed once as the controller restarted after a write.
 7. **A chosen Bluetooth name** ("8BitDo 2C (Prueba)", 35 bytes): after forgetting the controller and pairing it again,
-   macOS lists it under that name (`045e:0b13`, battery 100 %). Then, with the keyboard characteristic still there,
-   GameController's vendorName and IOKit's Product were the model's, "8BitDo Ultimate 2C Wireless"; after pairing with
-   `bt_plain_icon` (8), IOKit's Product is the chosen name. Diagnostics matches the two, which come from the same
-   device, and a real Xbox controller is named differently either way.
-8. **No keyboard in the battery widget** (`bt_plain_icon`, the template's Boot Keyboard Input Report `0x2a22` given
-   another UUID, installed with the names "8BitDo Ultimate 2C (X/S)" and "8BitDo Ultimate 2C (360)", 58 bytes): after
-   pairing again, `pmset -g accps` gives the controller no accessory category, as for a real Xbox pad, instead of
-   "Keyboard"; bluetoothd no longer logs "Detected keyboard LE HID", and the battery level still shows.
-9. **Battery by cable** (`81 05 00 5b`, 142 bytes with the rest): the controller answers on input report `02`, plugged in and
-   charged: 100 %, 4129 mV, charged, external power. The built app's menu bar item showed it while the app was open.
+   macOS lists it under that name (`045e:0b13`, battery 100 %). GameController's vendorName and IOKit's Product stay
+   "8BitDo Ultimate 2C Wireless" whatever the name, so Diagnostics still tells the 2C from a real Xbox controller by them.
 
 Not tried on hardware: the dongle's names, Linux,
 Diagnostics with two Xbox controllers over Bluetooth, and a whole discharge with the new table and its alerts.
-
-# Hardware validation of 1.1.1 (2026-11-20)
-
-On the same Ultimate 2C, by cable on macOS 27.2 (Apple silicon), through the core of the built 1.1.1 app, with the requests
-its page sends. The controller had firmware from a later development build, which 1.1.1 reads as unknown.
-
-1. **Restore → Original** took 1.09 from a backup and wrote 5,329 bytes; **installing the tweaks** wrote 5,222 bytes, with
-   the battery log that no longer turns the flash's protection off and the plain Bluetooth icon; a second check said it
-   already had this firmware. The core stayed up across both restarts of the controller.
-2. **The update notice:** that firmware shows none; firmware installed with 1.1.0 shows it.
-3. Checked on the same controller with the later build, whose code for these is the same: the battery log still writes
-   with the flash protected, an install sent for the dongle with the controller connected is refused, and after pairing
-   again with the plain icon the battery widget no longer shows a keyboard.
-
-# Linux (2026-11-20)
-
-On Carlos's brother's PC (CachyOS), from branch `1.2` with `install-linux.sh`, with his Ultimate 2C by cable. The command
-line found the controller; in the web app, each with Check First before the write: a backup, Restore → Original, installing
-every tweak, and restoring the backup, all working. Diagnostics worked too. Found: the installer lacked the executable bit,
-and opening the address without its token loads the page but answers "forbidden"; the server now opens the browser itself.
-
-# The dongle's names (2026-11-20)
-
-On Carlos's dongle (1.03 with both tweaks), after a fresh backup: names written (45 bytes) and read back; with the controller
-over 2.4 GHz macOS showed the X-input name ("8BitDo Ultimate 2C (2.4 GHz)", `045e:028e` bcdDevice `0x0103`), and in
-D-input `2dc8:301c` bcdDevice `0x0001` with the D-input name ("8BitDo Ultimate 2C (D-input)"). Empty names put 8BitDo's
-back, byte for byte the bank from before. D-input also worked with the controller on 1.2 and on the original 1.09. Turning the
-controller on from off with B + Home leaves it in X-input; it takes B + Home held until it turns off, then Home with B still
-held (now in tweaks.md and the FAQ).
-
-# Diagnostics with a real Xbox controller beside the 2C (2026-11-20)
-
-Carlos's 2C on 1.2 and his real Xbox Wireless Controller (`045e:0b13`, manufacturer Microsoft) over Bluetooth at once, with
-the dongle plugged in. Before the fix the Diagnostics tab followed whichever pad was used last, the Home ring went to the
-real Xbox, and the Firmware tab read again and again (the core listed one of the two, in whatever order macOS gave them).
-After it: the tab stays on the 2C, rumble, Direct Report and the Home ring level reach the 2C only, and the Firmware tab
-reads once. A real Xbox controller is told apart by its manufacturer, which the 2C doesn't report.

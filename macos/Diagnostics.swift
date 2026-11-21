@@ -33,37 +33,11 @@ final class Diagnostics: NSObject, WKScriptMessageHandler {
         }
     }
 
-    /// The 2C, never a real Xbox controller connected beside it with the same IDs: the last used of the others.
-    /// `current` can outlive a disconnection, so it only counts while macOS still lists it.
+    /// The one last used. `current` can outlive a disconnection, so it only counts while macOS still lists it.
     private var pad: GCController? {
-        let connected = GCController.controllers().filter { !realXboxNames.contains($0.vendorName ?? "") }
+        let connected = GCController.controllers()
         if let current = GCController.current, connected.contains(current) { return current }
         return connected.first
-    }
-
-    /// The names of the real Xbox controllers connected over Bluetooth (manufacturer Microsoft), whose vendorName in
-    /// GameController is that HID product name. Read when controllers come and go, not on every input.
-    private var realXboxNames: Set<String> = []
-
-    private func refreshRealXbox() {
-        realXboxNames = Set(Self.bluetoothXbox().filter { Self.isRealXbox($0) }.compactMap { IOHIDDeviceGetProperty($0, kIOHIDProductKey as CFString) as? String })
-    }
-
-    private static func isRealXbox(_ device: IOHIDDevice) -> Bool {
-        IOHIDDeviceGetProperty(device, kIOHIDManufacturerKey as CFString) as? String == "Microsoft"
-    }
-
-    /// The HID interfaces of 045e:0b13 pads over Bluetooth that take the 8-byte output report.
-    private static func bluetoothXbox() -> [IOHIDDevice] {
-        let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
-        IOHIDManagerSetDeviceMatching(manager, [kIOHIDVendorIDKey: 0x045E, kIOHIDProductIDKey: 0x0B13] as CFDictionary)
-        IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
-        defer { IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone)) }
-        let devices = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice> ?? []
-        return devices.filter {
-            (IOHIDDeviceGetProperty($0, kIOHIDTransportKey as CFString) as? String)?.contains("Bluetooth") == true
-                && (IOHIDDeviceGetProperty($0, kIOHIDMaxOutputReportSizeKey as CFString) as? Int ?? 0) >= 8
-        }
     }
 
     private func start() {
@@ -71,12 +45,8 @@ final class Diagnostics: NSObject, WKScriptMessageHandler {
         let center = NotificationCenter.default
         for name in [Notification.Name.GCControllerDidBecomeCurrent, .GCControllerDidStopBeingCurrent, .GCControllerDidConnect, .GCControllerDidDisconnect,
                      NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] {
-            observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
-                if note.name == .GCControllerDidConnect || note.name == .GCControllerDidDisconnect { self?.refreshRealXbox() }
-                self?.sendState()
-            })
+            observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.sendState() })
         }
-        refreshRealXbox()
         sendState()
         timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in self?.sendInput() }
         refreshSystemBattery()
@@ -226,20 +196,22 @@ final class Diagnostics: NSObject, WKScriptMessageHandler {
         send([0x03, 0x80, UInt8(clamping: level), save ? 1 : 0, 0, 0, 0, 0, 0], "ring", id)
     }
 
-    /// The 2C over Bluetooth only: a real Xbox controller beside it has the same IDs and never gets these reports.
     private func send(_ report: [UInt8], _ op: String, _ id: Any?) {
-        let ours = Self.bluetoothXbox().filter { !Self.isRealXbox($0) }
-        let shown = ours.filter { IOHIDDeviceGetProperty($0, kIOHIDProductKey as CFString) as? String == pad?.vendorName }
-        guard let device = shown.count == 1 ? shown.first : ours.count == 1 ? ours.first : nil else {
-            return result(op, ours.isEmpty ? "No 8BitDo Ultimate 2C was found over Bluetooth."
-                              : "More than one 8BitDo Ultimate 2C is connected over Bluetooth. Turn off the others and try again.", id)
+        let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
+        IOHIDManagerSetDeviceMatching(manager, [kIOHIDVendorIDKey: 0x045E, kIOHIDProductIDKey: 0x0B13] as CFDictionary)
+        IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
+        defer { IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone)) }
+        let devices = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice> ?? []
+        let bluetooth = devices.filter {  // a Bluetooth pad shows several HID interfaces: the one that takes the 8-byte report
+            (IOHIDDeviceGetProperty($0, kIOHIDTransportKey as CFString) as? String)?.contains("Bluetooth") == true
+                && (IOHIDDeviceGetProperty($0, kIOHIDMaxOutputReportSizeKey as CFString) as? Int ?? 0) >= 8
         }
-        // bluetoothXbox() closed its manager, and the devices with it: open this one just for the report
-        let opened = IOHIDDeviceOpen(device, IOOptionBits(kIOHIDOptionsTypeNone))
-        guard opened == kIOReturnSuccess else {
-            return result(op, "The controller couldn't be opened (IOReturn \(String(UInt32(bitPattern: opened), radix: 16))).", id)
+        // A real Xbox pad has the same IDs as the patched 2C: send to the one the tab shows, matched by name.
+        let shown = bluetooth.filter { IOHIDDeviceGetProperty($0, kIOHIDProductKey as CFString) as? String == pad?.vendorName }
+        guard let device = shown.count == 1 ? shown.first : bluetooth.count == 1 ? bluetooth.first : nil else {
+            return result(op, bluetooth.isEmpty ? "No controller was found over Bluetooth."
+                              : "More than one Xbox controller is connected over Bluetooth. Turn off the others and try again.", id)
         }
-        defer { IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone)) }
         let status = IOHIDDeviceSetReport(device, kIOHIDReportTypeOutput, 3, report, report.count)
         result(op, status == kIOReturnSuccess ? nil : "The report couldn't be sent (IOReturn \(String(UInt32(bitPattern: status), radix: 16))).", id)
     }

@@ -177,3 +177,11 @@ dialog label{display:flex;gap:10px;align-items:flex-start;margin-top:10px}dialog
   #tweaks-card{grid-column:2;grid-row:3/span 2;margin-top:14px}
   #tweaks-card~.cd{grid-column:1;grid-row:4;margin-top:14px}
 }
+
+.sim-panel{border:1px solid var(--accent);border-radius:12px;padding:16px;margin:12px 0;background:var(--card)}
+.sim-panel p{font-size:12px}.sim-buttons{display:flex;gap:6px;flex-wrap:wrap}.sim-held{background:var(--accent)!important;color:#111!important}
+.sim-axes{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px}.sim-axes label{display:grid;font-size:12px;gap:5px;max-width:140px}
+
+.tweak-group-title{grid-column:1/-1;margin:12px 0 3px;font-size:13px;font-weight:600;color:var(--dim)}
+.tweak-group-title:first-child{margin-top:0}
+.tw .requirement{display:block;font-style:normal;color:var(--dim);font-size:11.5px;line-height:1.4;margin-top:3px}

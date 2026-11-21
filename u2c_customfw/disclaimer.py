@@ -8,5 +8,5 @@ _HERE = Path(__file__).parent
 def text() -> str:
     for p in (_HERE.parent / "DISCLAIMER.md", _HERE / "DISCLAIMER.md"):
         if p.exists():
-            return p.read_text()
+            return p.read_text(encoding="utf-8")
     return "No warranty. Installing modified firmware probably voids the controller's warranty. Ultimate 2C firmware 1.09 only."

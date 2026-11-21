@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """One background job at a time, with an append-only event list that Server-Sent Events replay."""
 import os
+import secrets
 import subprocess
 import threading
 from types import SimpleNamespace
@@ -27,7 +28,18 @@ class Runner:
     def __init__(self, store):
         self.store, self.events, self.running, self.lock, self.awake = store, [], False, None, None
         self.writing = False   # a job that writes to the controller is running: the Mac app asks before quitting
+        self.closing = False
         self.cond = threading.Condition()
+        self.job_id = None
+        self.results = {}   # recent terminal results survive stream disconnects and later jobs
+
+    def status(self, job_id):
+        with self.cond:
+            if job_id in self.results:
+                return {"running": False, "result": self.results[job_id]}
+            if job_id and job_id == self.job_id:
+                return {"running": self.running, "result": None}
+            return None
 
     def push(self, event: dict) -> None:
         with self.cond:
@@ -36,11 +48,17 @@ class Runner:
 
     def _take(self) -> bool:
         """With self.cond held: the device for this server, unless a job here or another process is using it."""
-        if self.running:
+        if self.running or self.closing:
             return False
         self.lock = state.lock_device(self.store)
         self.running = self.lock is not None
         return self.running
+
+    def request_shutdown(self):
+        """Stop accepting work; existing operations retain their device lock until finished."""
+        with self.cond:
+            self.closing = True
+            self.cond.notify_all()
 
     def _free(self) -> None:
         state.unlock_device(self.lock)
@@ -62,12 +80,13 @@ class Runner:
         with self.cond:
             self._free()
 
-    def start(self, name: str, **params) -> bool:
+    def start(self, name: str, **params) -> str | bool:
         with self.cond:
             self.cond.wait_for(lambda: not self.running, timeout=self.WAIT)
             if not self._take():
                 return False
             self.events, self.writing = [], bool(params.get("write"))
+            job_id = self.job_id = secrets.token_urlsafe(16)
         try:   # until the thread runs, nothing else frees the device
             if self.writing:
                 self.awake = keep_awake()
@@ -87,7 +106,7 @@ class Runner:
         except BaseException:
             self.release()
             raise
-        return True
+        return job_id
 
     def _run(self, name, args):
         try:
@@ -102,4 +121,7 @@ class Runner:
         get_logger(self.store).info("done" if end["type"] == "done" else f"error: {end['message']}")
         with self.cond:
             self.events.append(end)
+            self.results[self.job_id] = end
+            while len(self.results) > 8:
+                del self.results[next(iter(self.results))]
             self._free()

@@ -12,14 +12,27 @@ jobs:
   test:
     strategy:
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        os: [macos-latest, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: python3 -m unittest discover -s tests -v
-      - run: python3 firmware-src/test.py
+      - run: python -m pip install -e .
+      - run: python -X utf8 -m unittest discover -s tests -v
+      - run: node tests/ui-startup.cjs
+      - run: node tests/windows-diagnostics.cjs
+      - run: node tests/job-recovery.cjs
+      - run: node tests/api-network.cjs
+      - run: node tests/ring-state.cjs
+      - run: node tests/windows-battery.cjs
+      - run: node tests/open-store.cjs
+      - run: node tests/stock-bluetooth-mapping.cjs
+      - run: python tools/check_bluetooth_selector.py
+      - run: node tests/stock-input-stream.cjs
+      - run: node tests/simulation-buttons.cjs
+      - if: runner.os != 'Windows'
+        run: python -X utf8 firmware-src/test.py
       - if: runner.os == 'macOS'
         run: swiftc -typecheck -target arm64-apple-macos13.0 macos/main.swift macos/Diagnostics.swift macos/MenuBattery.swift

@@ -1,10 +1,13 @@
 """Linux USB transport and device routing regression tests."""
 import unittest
+import sys
 from unittest.mock import patch
 
 from u2c_customfw.ops import devices
 from u2c_customfw.transport import DeviceInfo
-from u2c_customfw.transport import linux, libusb
+from u2c_customfw.transport import libusb
+if sys.platform.startswith("linux"):
+    from u2c_customfw.transport import linux
 
 
 def info(vid, pid, page, handle, version=0):
@@ -24,6 +27,7 @@ class LinuxUsbTest(unittest.TestCase):
                 info(0x045E, 0x028E, 0xFF7A, (1, 3), devices.DONGLE_BCD)]):
             self.assertEqual([d.mode for d in devices.find()], ["dongle_paired"])
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux hidraw only")
     def test_linux_routes_stock_to_hidraw_and_xbox_to_libusb(self):
         with patch.object(linux.hidraw, "open_channel", return_value="hidraw") as h, \
                 patch.object(linux.libusb, "open_channel", return_value="libusb") as u:

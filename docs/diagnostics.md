@@ -5,8 +5,46 @@ The Diagnostics tab helps you check how macOS sees the controller after installi
 - **Controller test:** shows what macOS's GameController reports, which is what a game gets, including the battery when macOS provides it. Press each button, stick and trigger to see it light up, and make the controller vibrate either the way a native game would or by sending the report straight to the controller. If only the direct report vibrates, the firmware isn't the problem.
 - **Firmware details:** what the app read from the controller or the dongle, including where the version came from, whether a firmware update is pending, and how the bootloader identifies itself.
 - **Problem report:** a text you can attach to a bug report.
-- **Battery by cable:** over a cable macOS reports no battery for the controller, so since 1.2 the test asks the controller itself and shows its level and whether it's charging or charged. It needs firmware installed with 1.2 or later. The app menu's **Show Battery in Menu Bar** also puts that level, or macOS's over Bluetooth, in the menu bar while the app is open; it's off until you turn it on.
 - **Battery log:** since 1.1, firmware installed with Processor rest writes down the battery's voltage and level once a minute while the controller runs on battery, in a part of its memory nothing else uses. The log stays on the controller through power-offs and holds about 270 hours; then it stops. Restoring your backup leaves it as it is. **Save Battery Log** reads it by cable and saves it as a CSV file in the app's folder, so you can send it with a problem report. It helps make the battery percentage more accurate.
 - **Install Firmware 1.09 Anyway…:** the last resort for a controller whose firmware can't be identified.
 
 The controller test is only available in the Mac app for now, because it uses macOS's GameController directly. Everything else in the tab also works when you run the app from source.
+
+## USB / dongle D-input motor tests on Windows
+
+Diagnostics can test both motors or each motor separately using the stock vendor
+HID output report `81 11 04 08`, without switching to XInput or installing a new
+rumble firmware tweak. This covers controller USB D-input (301b/301d) and the
+paired dongle D-input (301c, requiring its existing mode-restoration tweak).
+Bluetooth D-input is not included. A unique matching USB device and browser
+controller are required. Each test lasts 450 ms and sends an explicit zero-strength
+stop, also on interruption; leaving the tab requests an early stop.
+
+This tests the motors directly. It does not add DirectInput force-feedback support
+to games, Steam or the browser Gamepad API. The UI labels this **Test Both Motors**
+rather than **Vibrate Like a Game**.
+
+The controller's original v1.09 parser is at 0xf684, called from 0xf84e; bytes
+7 and 8 go to motor_set without an XInput-mode gate. The receiver v1.03 parser
+at 0xe078 accepts the same header, records strengths at RAM 0x842f15/16 and
+prepares forwarding. Bytes 5/6 contain its timing value; the diagnostic sends 450
+and still explicitly stops from the host. No firmware writes or update commands
+are sent. `tools/check_hid_rumble.py` executes both original parsers offline;
+radio delivery and physical vibration still require hardware testing.
+
+Older USB mode-switching patches conservatively lock B/X + Home after any unknown
+vendor command, including this motor test, until restart. The updated USB D-input
+patch exempts only the exact motor header `81 11 04 08`; the 2-second quiet period
+and all write/update locks remain. Reinstall that tweak with the current app to
+retain switching after a vibration test. The motor test itself needs no new patch.
+
+D-input diagnostics show independent L4 and R4 checks (button bits 2 and 5),
+including Bluetooth, USB and dongle reports. The extra checks are hidden in
+XInput; they are omitted from its completed-control count.
+
+Windows diagnostics can test the authored Bluetooth D-input output report with
+Bluetooth mode selection and Rumble over Bluetooth installed. The helper checks
+report sizes/IDs and the vendor output usage before writing. Each test lasts
+450 ms and always sends stop, including interruption. This is a toolkit motor
+test, not automatic D-input force feedback support in games. Updating from the
+old one-byte vendor output requires re-pairing the D-input profile once.

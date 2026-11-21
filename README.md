@@ -57,9 +57,13 @@ Or from source, with Python 3.12+: `python3 -m u2c_customfw.web` opens the app i
 
 ## Install (Linux)
 
-See [Linux installation, permissions, diagnostics and device support](docs/linux.md). From source, run `./install-linux.sh`, reconnect the controller or dongle, and launch `.venv/bin/python -m u2c_customfw.web`, which opens the app in your browser. Linux support is community-tested; platform-specific limitations are documented in the guide.
+See [Linux installation, permissions, diagnostics and device support](docs/linux.md). From source, run `./linux/install.sh`, reconnect the controller or dongle, and launch `.venv/bin/python -m u2c_customfw.web`, which opens the app in your browser. Linux support is community-tested; platform-specific limitations are documented in the guide.
 
 ## Use
+
+Windows 10/11 is also supported from source with Python 3.12+ and HIDAPI.
+See [Windows installation and diagnostics](docs/windows.md) for PowerShell commands
+and the current hardware-validation status.
 
 The app's **Help** button explains each step and why each tweak is needed.
 
@@ -101,3 +105,31 @@ This project builds on the reverse engineering of [jgus-org/8bitdo-2c-re-flake](
 ## License
 
 GPL-3.0-or-later; see `LICENSE`. 8BitDo firmware is not included in this repository. Not affiliated with or endorsed by 8BitDo.
+
+## Desktop packages
+
+Build **Windows EXE + portable ZIP** on Windows, or a **Linux AppImage** on Linux
+(Python 3.12 or newer). Both packages include the Python runtime; the EXE uses
+Microsoft Edge WebView2, and the AppImage includes QtWebEngine.
+
+Windows (PowerShell):
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[desktop]" pyinstaller==6.22.3 Pillow==12.3.0
+powershell -ExecutionPolicy Bypass -File windows/build.ps1
+```
+
+Linux (requires `libusb-1.0-0`, Qt desktop libraries and `appimagetool`):
+
+```bash
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -e '.[desktop]' pyinstaller==6.22.3 Pillow==12.3.0
+./linux/build-appimage.sh /path/to/appimagetool
+```
+
+Outputs and SHA-256 checksums are created under `dist/`. The Windows EXE is
+inside the extracted ZIP alongside `_internal`; do not move the EXE alone.
+The AppImage requires udev permissions for device access. See
+[desktop build prerequisites and troubleshooting](docs/desktop-builds.md),
+[Linux](linux/README.md), [Windows](windows/README.md), and [macOS](macos/).

@@ -15,15 +15,14 @@ from . import protocol
 from .protocol import app, boot
 from .transport import PermissionDenied, open_channel
 
-CONTROLLER_MODES = ("cable", "cable_360", "boot", "dongle", "dongle_paired")
+CONTROLLER_MODES = ("cable", "cable_360", "cable_dinput", "boot", "dongle", "dongle_paired")
 BOOT_HELP = "Turn the controller fully off, then hold LB + RB while plugging in the cable. The small light below the Home ring will blink white."
 RESTARTED = "The controller restarted with its new firmware."
 REPLUG = ("The controller hasn't come back yet: if macOS asks whether to allow the accessory to connect, allow it. Otherwise unplug the "
           "controller, hold Home for about 12 seconds until it turns off, then connect it again.")
 INSTALLED = "Installed. {} If you changed a Bluetooth tweak, remove the controller in System Settings → Bluetooth and pair it again."
 RESTORED = "Restored. {} If its Bluetooth tweaks changed, remove the controller in System Settings → Bluetooth and pair it again."
-NOT_ENTERED = ("The controller didn't appear in update mode within 8 seconds, so nothing was written. If the small light below the Home ring "
-               "is blinking white, it is in update mode: allow the accessory if macOS asks, then try again. If it isn't blinking, ")
+NOT_ENTERED = "The controller didn't restart into update mode, so nothing was written. "
 IN_UPDATE_MODE = "The controller is in update mode and nothing was written. Try again: the app installs and restores from there too."
 BOOT_WAIT, BACK_WAIT, STEP = 8, 10, 0.3   # seconds: to reach update mode, to come back from it, between looks
 UNCHANGED = "The controller already has this firmware, so nothing was written."
@@ -57,10 +56,13 @@ class Exit(Exception):
 
 
 def pick(modes=CONTROLLER_MODES):
-    present = [f for f in find() if f.mode in CONTROLLER_MODES]
+    found = find()
+    present = [f for f in found if f.mode in CONTROLLER_MODES]
     if len(present) > 1:
         raise Exit(2, "More than one device is connected. Unplug all but one controller.")
     if not present or present[0].mode not in modes:
+        if not present and any(f.mode == "xinput_only" for f in found):
+            raise Exit(2, devices.XINPUT_NOTE)
         if present and present[0].mode.startswith("dongle"):
             raise Exit(2, "That is the 2.4 GHz dongle, and this command only works with the controller.")
         want = "by cable" if "cable" in modes else "in update mode. " + BOOT_HELP
@@ -173,26 +175,34 @@ def _dongle_change(args, store, f, tweaks=(), source: str | None = None, chosen=
     args.say(DONGLE_DONE if came_back else DONGLE_REPLUG)
 
 
+def _backup_dongle(args, store, ch, in_boot=False):
+    path = dng.backup(ch, store, args.progress, in_boot=in_boot)
+    known, tweaks = dng.state(path.read_bytes()[dng.BASE:dng.END])
+    get_logger(store).info("backup %s", path.name)
+    args.hint(str(path))
+    has = dng.describe(tweaks) if known else "firmware this app doesn't recognise"
+    args.say(f"Backup saved as “{path.name}”. The dongle has {has}.")
+
+
 def cmd_backup(args, store):
-    f = pick(("cable", "cable_360", "boot", "dongle", "dongle_paired"))
-    if f.mode.startswith("dongle"):
-        ch = open_channel(f.info, 0x81)
+    f = pick(("cable", "cable_360", "cable_dinput", "boot", "dongle", "dongle_paired"))
+    if f.mode.startswith("dongle") or _dongle_in_boot(f):
+        ch = open_channel(f.info, 0 if f.mode == "boot" else 0x81)
         try:
-            path = dng.backup(ch, store, args.progress)
+            return _backup_dongle(args, store, ch, in_boot=f.mode == "boot")
         finally:
             ch.close()
-        known, tweaks = dng.state(path.read_bytes()[dng.BASE:dng.END])
-        get_logger(store).info("backup %s", path.name)
-        args.hint(str(path))
-        has = dng.describe(tweaks) if known else "firmware this app doesn't recognise"
-        args.say(f"Backup saved as “{path.name}”. The dongle has {has}.")
-        return
     ch = open_channel(f.info, 0 if f.mode == "boot" else 0x81)
     try:
-        b = bkp.backup(ch, f.mode, store, args.progress)
+        try:
+            b = bkp.backup(ch, f.mode, store, args.progress)
+        except probe.PairedDongle:
+            # A stock XInput receiver enumerates with the controller's USB ID.
+            # The controller backup checks the device before creating any file.
+            return _backup_dongle(args, store, ch)
     finally:
         ch.close()
-    get_logger(store).info("backup %s sha256 %s", b.path.name, b.sha256)   # the name only: the folder holds the user's name
+    get_logger(store).info("backup %s sha256 %s", b.path.name, b.sha256)
     args.hint(f"{b.path}\nsha256 {b.sha256}")
     args.say(f"Backup saved as “{b.path.name}”. The controller has {bkp.describe(b.state)}.")
 
@@ -258,7 +268,7 @@ def _into_update_mode(f):
         ch.close()
     info = dng._wait(find, "boot", BOOT_WAIT, STEP)
     if info is None:
-        raise Exit(2, NOT_ENTERED + BOOT_HELP[0].lower() + BOOT_HELP[1:])
+        raise Exit(2, NOT_ENTERED + BOOT_HELP)
     return info
 
 
@@ -266,7 +276,7 @@ def _back():
     """Whether the controller came back by cable after the bootloader restarted it."""
     end = time.time() + BACK_WAIT
     while time.time() < end:
-        if any(f.mode in ("cable", "cable_360") for f in find()):
+        if any(f.mode in ("cable", "cable_360", "cable_dinput", "xinput_only") for f in find()):
             return True
         time.sleep(STEP)
     return False
@@ -322,7 +332,7 @@ def _plan_and_write(args, f, plan, hint, done):
 
 def cmd_patch(args, store):
     need_accept(args, store)
-    f = pick(("boot", "cable", "cable_360", "dongle", "dongle_paired"))
+    f = pick(("boot", "cable", "cable_360", "cable_dinput", "dongle", "dongle_paired"))
     keys = [k for k in args.tweaks.split(",") if k]
     dongle = f.mode.startswith("dongle") or _dongle_in_boot(f)
     _check_shown(args, dongle)
@@ -351,7 +361,7 @@ def cmd_patch(args, store):
 
 def cmd_restore(args, store):
     need_accept(args, store)
-    f = pick(("boot", "cable", "cable_360", "dongle", "dongle_paired"))
+    f = pick(("boot", "cable", "cable_360", "cable_dinput", "dongle", "dongle_paired"))
     dongle = f.mode.startswith("dongle") or _dongle_in_boot(f)
     _check_shown(args, dongle)
     if dongle:

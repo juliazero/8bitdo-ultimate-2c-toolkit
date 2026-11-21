@@ -1,0 +1,2 @@
+# Firmware machine code must never undergo Windows newline conversion.
+*.bin binary

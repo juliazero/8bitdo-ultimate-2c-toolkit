@@ -99,12 +99,59 @@ class WebTest(unittest.TestCase):
                 mock.patch.object(cli, "open_channel", lambda i, rid: SimApp(blank)):
             self.assertEqual(json.loads(self.call("POST", "/api/battery-log")[1]), {"records": 0})
         with mock.patch.object(cli, "find", lambda: []):
-            self.assertIn("by cable", json.loads(self.call("POST", "/api/battery-log")[1])["error"])
+            self.assertIn("directly by USB", json.loads(self.call("POST", "/api/battery-log")[1])["error"])
+
+    def test_battery_log_exports_from_controller_bootloader_without_writes(self):
+        import struct
+        flash = bytearray(controller_flash())
+        flash[0x53000:0x53008] = struct.pack("<BBHHBB", 1, 195, 1, 4000, 80, 2)
+        device = SimBoot(bytes(flash))
+        info = transport.DeviceInfo(0x2dc8, 0x3208, 0x8c, "USB", "boot", None)
+        with mock.patch.object(cli, "find", return_value=[devices.Found(info, "boot")]), \
+                mock.patch.object(cli, "open_channel", return_value=device) as opened, mock.patch.dict("os.environ", {"U2C_SIM": "1"}):
+            result = json.loads(self.call("POST", "/api/battery-log")[1])
+        self.assertEqual(result["records"], 1)
+        opened.assert_called_once_with(info, 0)
+        self.assertEqual(bytes(device.f), bytes(flash))
+        self.assertFalse(self.httpd.runner.running)
+
+    def test_battery_log_rejects_dongle_bootloader(self):
+        device = SimBoot(bytes(0x20000))
+        info = transport.DeviceInfo(0x2dc8, 0x3208, 0x8c, "USB", "boot", None)
+        with mock.patch.object(cli, "find", return_value=[devices.Found(info, "boot")]), mock.patch.object(cli, "open_channel", return_value=device):
+            result = json.loads(self.call("POST", "/api/battery-log")[1])
+        self.assertIn("isn't the controller", result["error"])
+        self.assertFalse(self.httpd.runner.running)
+
+    def test_battery_log_does_not_open_wireless_connections(self):
+        info = transport.DeviceInfo(0x45e, 0xb13, 1, "Bluetooth", "pad", None)
+        for mode in ("bluetooth_xbox", "dongle", "dongle_paired"):
+            with mock.patch.object(cli, "find", return_value=[devices.Found(info, mode)]), mock.patch.object(cli, "open_channel") as opened:
+                result = json.loads(self.call("POST", "/api/battery-log")[1])
+            self.assertIn("cannot be exported", result["error"])
+            opened.assert_not_called()
 
     def test_report_endpoint_with_a_bad_body(self):
         with mock.patch.object(cli, "find", lambda: []):
             for body in ({"macos": "x"}, {"boot_identity": "x"}, {"macos": {"name": 5}}):
                 self.assertEqual(self.call("POST", "/api/report", body)[0], 200)
+
+    def test_store_folder_button_is_authenticated_and_only_opens_the_app_store(self):
+        with mock.patch.object(server, "open_store") as opened:
+            self.assertEqual(self.call("POST", "/api/open-store", token=None)[0], 403)
+            opened.assert_not_called()
+            self.assertEqual(self.call("POST", "/api/open-store", {"path": "some-other-folder"})[0], 200)
+            opened.assert_called_once_with(self.store)
+            opened.side_effect = OSError("file manager unavailable")
+            status, body = self.call("POST", "/api/open-store")
+            self.assertEqual(status, 422)
+            self.assertIn("file manager unavailable", body)
+        self.assertEqual(json.loads(self.call("GET", "/api/state")[1])["storage_dir"], str(self.store.resolve()))
+
+    def test_store_folder_uses_windows_file_explorer(self):
+        with mock.patch.object(server.sys, "platform", "win32"), mock.patch.object(server.os, "startfile", create=True) as opened:
+            server.open_store(self.store)
+        opened.assert_called_once_with(str(self.store.resolve()))
 
     def test_report_endpoint_uses_the_extras(self):
         with mock.patch.object(cli, "find", lambda: []):
@@ -153,10 +200,32 @@ class WebTest(unittest.TestCase):
         self.assertFalse(got["available"])
         self.assertIn("2.4 GHz dongle", got["note"])
         got = json.loads(self.call("GET", "/api/firmware")[1])   # a stock dongle with the controller on: what to do
-        self.assertIn("turn the controller off", got["error"])
+        self.assertEqual(got["device"], "dongle")
+        self.assertTrue(got["paired"])
+        self.assertNotIn("error", got)
 
     def test_api_ring_refuses_in_update_mode(self):
         self.assertEqual(self.ring_call({"level": 2}, mode="boot")[0], 409)
+
+    def test_xinput_receiver_with_controller_usb_id_is_reported_as_paired_dongle(self):
+        from types import SimpleNamespace
+        flash = bytearray(controller_flash())
+        flash[0x10000:0x10010] = bytes([255]) * 16
+        info = transport.DeviceInfo(0x2DC8, 0x310A, 0xFF7A, "USB", "8BitDo", None, 0x114)
+        fw = SimpleNamespace(known=True, version=1.03, tweaks=("dongle_dinput",), names={})
+        with mock.patch.object(cli, "find", return_value=[devices.Found(info, "cable")]), \
+                mock.patch.object(cli, "open_channel", side_effect=lambda *args: SimApp(bytes(flash))), \
+                mock.patch.object(server.dongle, "read_firmware", return_value=fw) as read, \
+                mock.patch.object(server.dongle, "read_unit", return_value=b"unit"), \
+                mock.patch.object(server.dongle, "unit_backups", return_value=[]):
+            status, body = self.call("GET", "/api/firmware")
+        data = json.loads(body)
+        self.assertEqual(status, 200)
+        self.assertEqual(data["device"], "dongle")
+        self.assertTrue(data["paired"])
+        self.assertEqual(data["version"], 1.03)
+        self.assertNotIn("error", data)
+        read.assert_called_once()
 
     def test_firmware_endpoint_reports_the_ring_level(self):
         built = recipes.build(STOCK_A, ["ring_5"], **K)
@@ -168,6 +237,7 @@ class WebTest(unittest.TestCase):
                 mock.patch.object(recipes, "_constants", lambda a=None, b=None, c=None: (K["stock_sha256"], K["region_sha256"], K["remainder_sha256"])):
             data = json.loads(self.call("GET", "/api/firmware")[1])
         self.assertEqual(data["ring_level"], 1)
+        self.assertEqual(data["tweaks"][-1]["title"], recipes.RECIPES["ring_25"].title)
 
     def test_token_required(self):
         self.assertEqual(self.call("GET", "/api/state", token=None)[0], 403)
@@ -196,6 +266,117 @@ class WebTest(unittest.TestCase):
         self.assertEqual([e["type"] for e in ev], ["log", "progress", "progress", "done"])
         self.assertEqual(ev[-1], {"type": "done", "message": "starting", "unchanged": False})
         self.assertEqual(ev[2], {"type": "progress", "label": "write", "done": 100, "total": 100})
+
+    def test_job_status_requires_auth_and_matches_the_requested_job(self):
+        jobs.ACTIONS["backup"] = lambda args, store: args.say("Backup saved")
+        status, response = self.call("POST", "/api/backup")
+        self.assertEqual(status, 202)
+        job_id = json.loads(response)["job"]
+        with self.httpd.runner.cond:
+            self.assertTrue(self.httpd.runner.cond.wait_for(lambda: not self.httpd.runner.running, timeout=5))
+        self.assertEqual(self.call("GET", "/api/job?job=" + job_id, token=None)[0], 403)
+        self.assertEqual(self.call("GET", "/api/job?job=other-job")[0], 404)
+        status, response = self.call("GET", "/api/job?job=" + job_id)
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(response), {"running": False, "result": {"type": "done", "message": "Backup saved", "unchanged": False}})
+
+    def test_native_windows_rumble_is_authenticated_validated_and_exclusive(self):
+        with mock.patch.object(server.sys, "platform", "win32"), \
+                mock.patch.object(server, "WINDOWS_RUMBLE") as rumble, mock.patch.object(server.HID_RUMBLE,"status",return_value={"available":False}):
+            rumble.status.return_value = {"available": True, "index": 2}
+            rumble.rumble.return_value = {"ok": True}
+            self.assertEqual(self.call("GET", "/api/windows-rumble", token=None)[0], 403)
+            self.assertEqual(json.loads(self.call("GET", "/api/windows-rumble")[1]), {"available": True, "index": 2})
+            self.assertEqual(self.call("POST", "/api/windows-rumble", {"index": True, "locality": "left"})[0], 400)
+            self.assertEqual(self.call("POST", "/api/windows-rumble", {"index": 2, "locality": "left", "expires": 1})[0], 408)
+            self.assertTrue(self.httpd.runner.claim())
+            try:
+                self.assertEqual(self.call("POST", "/api/windows-rumble", {"index": 2, "locality": "left"})[0], 409)
+                rumble.rumble.assert_not_called()
+            finally:
+                self.httpd.runner.release()
+            self.assertEqual(self.call("POST", "/api/windows-rumble", {"index": 2, "locality": "left"})[0], 200)
+            rumble.rumble.assert_called_once_with(2, "left")
+            self.assertFalse(self.httpd.runner.running)
+
+    def test_vendor_rumble_route_is_authenticated_and_exclusive(self):
+        with mock.patch.object(server.sys,'platform','win32'),mock.patch.object(server,'HID_RUMBLE') as rumble:
+            rumble.status.return_value={'available':True,'kind':'vendor','product':0x301d}
+            rumble.rumble.return_value={'ok':True};rumble.stop.return_value={'ok':True}
+            self.assertEqual(json.loads(self.call('GET','/api/windows-rumble')[1])['kind'],'vendor')
+            req={'kind':'vendor','locality':'left'}
+            self.assertEqual(self.call('POST','/api/windows-rumble',req,token=None)[0],403)
+            self.assertEqual(self.call('POST','/api/windows-rumble',{**req,'expires':1})[0],408)
+            self.assertTrue(self.httpd.runner.claim())
+            try:
+                self.assertEqual(self.call('POST','/api/windows-rumble',req)[0],409)
+                self.assertEqual(self.call('POST','/api/windows-rumble/stop',{'kind':'vendor'})[0],200)
+                rumble.rumble.assert_not_called()
+            finally:self.httpd.runner.release()
+            self.assertEqual(self.call('POST','/api/windows-rumble',req)[0],200)
+            rumble.rumble.assert_called_once_with('left')
+
+    def test_native_stop_is_available_during_an_active_test(self):
+        with mock.patch.object(server.sys, "platform", "win32"), mock.patch.object(server, "WINDOWS_RUMBLE") as rumble:
+            rumble.stop.return_value = {"ok": True}
+            self.assertTrue(self.httpd.runner.claim())
+            try:
+                self.assertEqual(self.call("POST", "/api/windows-rumble/stop", {"index": 2}, token=None)[0], 403)
+                self.assertEqual(self.call("POST", "/api/windows-rumble/stop", {"index": 4})[0], 400)
+                self.assertEqual(self.call("POST", "/api/windows-rumble/stop", {"index": 2})[0], 200)
+                rumble.stop.assert_called_once_with(2)
+            finally:
+                self.httpd.runner.release()
+
+    def test_windows_battery_is_authenticated_and_read_only(self):
+        with mock.patch.object(server.sys, "platform", "win32"), mock.patch.object(server, "windows_battery", return_value={"level": .73, "state": "reported", "source": "Windows Bluetooth"}) as battery:
+            self.assertEqual(self.call("GET", "/api/windows-battery", token=None)[0], 403)
+            battery.assert_not_called()
+            status, body = self.call("GET", "/api/windows-battery")
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)["level"], .73)
+            self.assertFalse(self.httpd.runner.running)
+
+    def test_stock_bluetooth_input_is_authenticated_and_read_only(self):
+        with mock.patch.object(server.sys, "platform", "win32"), mock.patch.object(server, "WINDOWS_STOCK_GAMEPAD") as gamepad:
+            gamepad.snapshot.return_value = {"available": True, "lt": 0, "rt": .5}
+            self.assertEqual(self.call("GET", "/api/windows-stock-gamepad", token=None)[0], 403)
+            gamepad.snapshot.assert_not_called()
+            status, body = self.call("GET", "/api/windows-stock-gamepad")
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)["rt"], .5)
+            self.assertFalse(self.httpd.runner.running)
+
+    def test_stock_bluetooth_stream_delivers_each_state_and_ends_on_disconnect(self):
+        with mock.patch.object(server.sys, "platform", "win32"), mock.patch.object(server, "WINDOWS_STOCK_GAMEPAD") as gamepad:
+            self.assertEqual(self.call("GET", "/api/windows-stock-stream", token=None)[0], 403)
+            gamepad.snapshot.assert_not_called()
+            states = [{"available": True, "lt": value, "rt": value} for value in (0, .25, .75)] + [{"available": False, "connected": False}]
+            gamepad.snapshot.side_effect = states
+            status, body = self.call("GET", "/api/windows-stock-stream")
+            self.assertEqual(status, 200)
+            received = [json.loads(line[6:]) for line in body.splitlines() if line.startswith("data: ")]
+            self.assertEqual(received, states)
+            self.assertTrue(self.httpd.RequestHandlerClass.disable_nagle_algorithm)
+
+    def test_bluetooth_ring_validates_auth_and_releases_device_after_failure(self):
+        with mock.patch.object(server.sys, "platform", "win32"), \
+                mock.patch("u2c_customfw.transport.windows.set_bluetooth_ring") as ring:
+            self.assertEqual(self.call("POST", "/api/bluetooth-ring", {"level": 2, "save": False}, token=None)[0], 403)
+            self.assertEqual(self.call("POST", "/api/bluetooth-ring", {"level": True})[0], 400)
+            self.assertTrue(self.httpd.runner.claim())
+            try:
+                self.assertEqual(self.call("POST", "/api/bluetooth-ring", {"level": 2})[0], 409)
+                ring.assert_not_called()
+            finally:
+                self.httpd.runner.release()
+            self.assertEqual(self.call("POST", "/api/bluetooth-ring", {"level": 2, "save": False})[0], 200)
+            ring.assert_called_once_with(2, False)
+            ring.side_effect = OSError("disconnected")
+            status, body = self.call("POST", "/api/bluetooth-ring", {"level": 255, "save": True})
+            self.assertEqual(status, 422)
+            self.assertIn("disconnected", body)
+            self.assertFalse(self.httpd.runner.running)
 
     def test_the_end_event_carries_the_last_sentence_and_whether_anything_changed(self):
         def fake(args, store):
@@ -474,13 +655,13 @@ class WebTest(unittest.TestCase):
         self.assertEqual(status, 200, text)
         self.assertTrue(data["known"])
         self.assertEqual(data["recipes"], ["bt_xbox", "cable_360"])
-        self.assertIn("Xbox Series X|S controller over Bluetooth", " ".join(data["titles"]))
-        self.assertEqual(data["names"], {"bt_xbox": {"label": "Bluetooth name", "default": "8BitDo Ultimate 2C (X/S)", "max": 27, "held": "8BitDo Ultimate 2C (X/S)"},
+        self.assertIn("XInput mode over Bluetooth", " ".join(data["titles"]))
+        self.assertEqual(data["names"], {"bt_xbox": {"label": "Bluetooth name", "default": "8BitDo Ultimate 2C (X)", "max": 27, "held": "8BitDo Ultimate 2C (X)"},
                                          "cable_360": {"label": "Name over cable", "default": "8BitDo Ultimate 2C Wireless Controller", "max": 38, "held": "8BitDo Ultimate 2C Wireless Controller"}})
         self.assertEqual((data["version"], data["version_from"]), (1.09, "update record"))
         self.assertEqual((data["pending"], data["boot_identity"]), (False, None))
         self.assertEqual([(t["key"], t["on"]) for t in data["tweaks"]],
-                         [("bt_xbox", True), ("bt_rumble", False), ("bt_rumble_long", False), ("cable_360", True), ("dim_leds", False), ("battery_alerts", False), ("settings", False), ("fixes", False), ("stick_precision", False), ("cpu_rest", False), ("fast_scan", False), ("ble_fast", False), ("ring", False)])
+                         [("bt_xbox", True), ("bt_rumble", False), ("bt_rumble_long", False), ("bt_modes", False), ("cable_360", True), ("dim_leds", False), ("battery_alerts", False), ("settings", False), ("fixes", False), ("stick_precision", False), ("cpu_rest", False), ("usb_dinput", False), ("fast_scan", False), ("ble_fast", False), ("bt_switch2", False), ("ring", False)])
 
     def test_firmware_endpoint_in_update_mode_names_the_backup_restore_uses(self):
         flash = controller_flash()
@@ -571,6 +752,14 @@ class WebTest(unittest.TestCase):
         with mock.patch.object(cli, "find", lambda: [devices.Found(info, "bluetooth")]):
             data = json.loads(self.call("GET", "/api/firmware")[1])
         self.assertEqual(data["note"], "Connect the controller by cable to see or change its firmware.")   # the ring needs the Xbox tweak
+
+    def test_firmware_endpoint_with_xinput_only_explains_bootloader(self):
+        info = transport.DeviceInfo(0x045e, 0x028e, 1, "USB", "Controller", None, 0x114)
+        with mock.patch.object(cli, "find", return_value=[devices.Found(info, "xinput_only")]), \
+                mock.patch.object(cli, "open_channel") as opened:
+            data = json.loads(self.call("GET", "/api/firmware")[1])
+        self.assertEqual(data["note"], devices.XINPUT_NOTE)
+        opened.assert_not_called()
 
     def test_firmware_endpoint_marks_a_permission_error(self):
         info = transport.DeviceInfo(0x2DC8, 0x310A, 0xFF7A, "USB", "x", None)

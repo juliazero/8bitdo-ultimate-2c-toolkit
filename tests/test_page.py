@@ -153,9 +153,6 @@ class TabsTest(PageCase):
             self.assertIn("disabled", none.find(id_).attrs, id_)
         self.assertEqual(none.find("restore-why").all_text(), "Back up the dongle first to restore it.")
         self.assertEqual(self.hero("&diagsim=dongle&stockdongle=1")[1], "Original dongle firmware 1.03")
-        both = self.server.dom("&diagsim=dongle&dinput=1").find("details-body").all_text()
-        self.assertIn("1.03 with 2 tweaks", both)
-        self.assertIn("D-input mode with B + Home", both)
         self.assertEqual(next(n for n in dom.find("pic").walk() if n.tag == "svg").attrs.get("aria-label"), "2.4 GHz dongle")
         text = dom.find("tab-firmware").shown_text()
         self.assertNotIn("controller", text.replace("Xbox 360 controller", ""))   # no step talks about the controller
@@ -264,11 +261,6 @@ class TabsTest(PageCase):
         self.assertIn("hidden", self.server.dom().find("fw-update").attrs)   # nothing installed, nothing to update
         css = (Path(__file__).parent.parent / "u2c_customfw/web/static/style.css").read_text()
         self.assertIn(".upd{color:var(--info)", css)
-
-    def test_by_cable_the_battery_comes_from_the_controller(self):
-        self.assertEqual(self.server.dom("&diagsim=cable&cablebattery=1").find("test-battery").all_text(), "84 %, charging (read from the controller)")
-        self.assertEqual(self.server.dom("&diagsim=cable&cablebattery=full").find("test-battery").all_text(), "Charged (read from the controller)")
-        self.assertEqual(self.server.dom("&diagsim=bt").find("test-battery").all_text(), "macOS doesn't report the battery for this controller")
 
     def test_the_hero_says_where_the_version_came_from(self):
         self.assertEqual(self.hero("")[2], "Identified from the installed firmware")
@@ -387,7 +379,7 @@ class SettingsTabTest(PageCase):
 
     def test_installing_includes_settings_by_default_with_the_ring_code(self):
         dom = self.server.dom("&diagsim=boot&scenario=installed")
-        self.assertEqual(dom.find("diag-snap").all_text(), "bt_xbox,bt_rumble,cable_360,dim_leds,battery_alerts,settings,fixes,cpu_rest,ring_normal,ble_interval,battery_table,bt_plain_icon,battery_log")
+        self.assertEqual(dom.find("diag-snap").all_text(), "bt_xbox,bt_rumble,cable_360,dim_leds,battery_alerts,settings,fixes,cpu_rest,ring_normal,ble_interval,battery_table,battery_log")
 
     def test_sticks_and_triggers_have_their_controls(self):
         dom = self.server.dom(self.READY)
@@ -621,7 +613,7 @@ class ControllerTestCard(PageCase):
 
     def test_tweak_controls_start_from_what_is_installed(self):
         dom, _, _ = self.body("boot&tweaks=1&scenario=installed")
-        self.assertEqual(dom.find("diag-snap").all_text(), "bt_xbox,ring_5,ble_interval,battery_table,bt_plain_icon")
+        self.assertEqual(dom.find("diag-snap").all_text(), "bt_xbox,ring_5,ble_interval,battery_table")
 
     def test_a_newer_version_shows_a_line_with_its_page(self):
         self.assertIn("hidden", self.server.dom().find("update").attrs)   # the simulation never asks GitHub
@@ -633,19 +625,19 @@ class ControllerTestCard(PageCase):
 
     def test_a_ring_level_is_not_kept_once_the_original_firmware_is_read(self):
         dom, _, _ = self.body("boot&tweaks=1&scenario=restored")
-        self.assertEqual(dom.find("diag-snap").all_text(), "bt_xbox,ble_interval,battery_table,bt_plain_icon")
+        self.assertEqual(dom.find("diag-snap").all_text(), "bt_xbox,ble_interval,battery_table")
 
     def test_alerts_off_with_normal_installs_no_ring_code(self):  # with the other tweaks that need it off too
         dom, _, _ = self.body("boot&scenario=noalerts")
-        self.assertEqual(dom.find("diag-snap").all_text(), "bt_xbox,bt_rumble,cable_360,dim_leds,ble_interval,battery_table,bt_plain_icon")
+        self.assertEqual(dom.find("diag-snap").all_text(), "bt_xbox,bt_rumble,cable_360,dim_leds,ble_interval,battery_table")
 
     def test_reading_the_same_firmware_keeps_the_choice_made(self):
         dom, _, _ = self.body("boot&tweaks=1&scenario=keptchoice")
-        self.assertEqual(dom.find("diag-snap").all_text(), "bt_xbox,cable_360,ring_5,ble_interval,battery_table,bt_plain_icon")
+        self.assertEqual(dom.find("diag-snap").all_text(), "bt_xbox,cable_360,ring_5,ble_interval,battery_table")
 
     def test_original_firmware_keeps_the_suggested_tweaks(self):
         dom, _, _ = self.body("boot&scenario=installed")
-        self.assertEqual(dom.find("diag-snap").all_text(), "bt_xbox,bt_rumble,cable_360,dim_leds,battery_alerts,settings,fixes,cpu_rest,ring_normal,ble_interval,battery_table,bt_plain_icon,battery_log")
+        self.assertEqual(dom.find("diag-snap").all_text(), "bt_xbox,bt_rumble,cable_360,dim_leds,battery_alerts,settings,fixes,cpu_rest,ring_normal,ble_interval,battery_table,battery_log")
 
     def ring_button(self, dom, index):
         return next(n for n in dom.find("ring-card").walk() if n.attrs.get("data-live") == str(index))

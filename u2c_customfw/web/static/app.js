@@ -3,12 +3,20 @@ const token = new URLSearchParams(location.search).get("token") || "";
 if (new URLSearchParams(location.search).has("native")) document.body.classList.add("native");  // in the Mac app, whose title bar shows the name and Help
 const $ = (id) => document.getElementById(id);
 const setOn = (el, on) => { el.classList.toggle("on", on); el.setAttribute("aria-pressed", on); };  // a segmented choice or a chip
-const api = async (method, path, body) => {
-  const r = await fetch(path, { method, headers: { "X-Token": token }, body: body ? JSON.stringify(body) : undefined });
-  const text = await r.text();
-  let data = {}; try { data = JSON.parse(text); } catch (e) { data = { error: text }; }
-  if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
-  return data;
+const api = async (method, path, body, signal) => {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const r = await fetch(path, { method, headers: { "X-Token": token }, body: body ? JSON.stringify(body) : undefined, signal });
+      const text = await r.text();
+      let data = {}; try { data = JSON.parse(text); } catch (e) { data = { error: text }; }
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      return data;
+    } catch (error) {
+      // Only reads can be retried: a lost POST response may already have acted.
+      if (method === "GET" && attempt === 0 && error instanceof TypeError && !signal?.aborted) continue;
+      throw error;
+    }
+  }
 };
 
 const ICON = {
@@ -39,7 +47,7 @@ ${face(215, 43, "Y")}${face(198, 60, "X")}${face(232, 60, "B")}${face(215, 77, "
 <circle data-k="Home" cx="150" cy="40" r="8" fill="#30353d" stroke="${led || "#4d545e"}" stroke-width="2.4"/>${led ? `<circle cx="150" cy="40" r="13" stroke="${led}" stroke-width="5" opacity=".18"/>` : ""}
 </svg>`;
 
-const CONTROLLER = ["cable", "cable_360", "boot"];
+const CONTROLLER = ["cable", "cable_360", "cable_dinput", "boot"];
 let st = null, fw = null, reading = false, busy = false, base = "backup";
 
 const tweakBoxes = () => [...document.querySelectorAll(".tweak")];
@@ -52,12 +60,12 @@ const chosenNames = (boxes, on) => Object.fromEntries(boxes.filter((b) => on.inc
 const dongleNames = () => chosenNames(dongleNameBoxes(), dongleTweaks());
 const RING_NAMES = { ring_normal: "normal", ring_25: "25 %", ring_5: "5 %", ring_1: "1 %", ring_0_1: "0.1 %", ring_off: "off" };
 let ringKept = "", dongleRead = null;  // the Home ring level installed, kept by the next install; a level saved from Settings overrides it at power-on
-const RING_CODE_USERS = ["battery_alerts", "settings", "fixes", "stick_precision", "cpu_rest"];
+const RING_CODE_USERS = ["battery_alerts", "settings", "fixes", "stick_precision", "cpu_rest", "usb_dinput"];
 const needsRingCode = () => tweakBoxes().some((x) => RING_CODE_USERS.includes(x.value) && x.checked);
-const tweaks = () => { const t = [...tweakBoxes().filter((x) => x.checked).map((x) => x.value), ...(ringKept ? [ringKept] : needsRingCode() ? ["ring_normal"] : [])]; return t.length ? [...t, "ble_interval", "battery_table", ...(t.includes("bt_xbox") ? ["bt_plain_icon"] : []), ...(t.includes("cpu_rest") ? ["battery_log"] : [])] : t; };  // every install asks for 12.5 ms and has the measured battery level; with Processor rest, it keeps the battery log
+const tweaks = () => { const t = [...tweakBoxes().filter((x) => x.checked).map((x) => x.value), ...(ringKept ? [ringKept] : needsRingCode() ? ["ring_normal"] : [])]; return t.length ? [...t, "ble_interval", "battery_table", ...(t.includes("cpu_rest") ? ["battery_log"] : [])] : t; };  // every install asks for 12.5 ms and has the measured battery level; with Processor rest, it keeps the battery log
 const nameBoxes = () => [...document.querySelectorAll(".tname")];
 const showHeld = (b) => {   // the name the firmware holds goes in its box only when someone chose it
-  const n = (fw && fw.names || {})[b.dataset.for], held = n && n.held && n.held !== b.dataset.default ? n.held : "";
+  const n = (fw && fw.names || {})[b.dataset.for], held = n && n.held && n.held !== b.dataset.default && !(b.dataset.for === "bt_xbox" && n.held === "8BitDo Ultimate 2C (X/S)") ? n.held : "";
   b.dataset.held = held; b.value = held;
 };
 const nameOf = (box) => box.value.trim() || (box.dataset.held ? box.dataset.default : box.placeholder);   // what it will be called
@@ -76,8 +84,10 @@ function lastBackup(names) {  // controller-YYYYMMDD-HHMMSS….bin, oldest first
 
 function hero(devs, ctrl, boot) {
   const dongle = devs.find((d) => d.mode.startsWith("dongle")), bt = devs.find((d) => d.mode.startsWith("bluetooth")), err = devs.find((d) => d.mode === "error");
-  let cls = "", title = "Firmware not read", note = "", chips = null;
+  const inputOnly = devs.find((d) => d.mode === "xinput_only");
+  let cls = "", title = refreshing || reading ? "Reading the firmware…" : "Firmware unavailable", note = "", chips = null;
   if (err) [cls, title, note] = ["bad", "Can't look for controllers", err.name];
+  else if (!ctrl && !bt && !dongle && inputOnly) [title, note] = ["Xbox 360 USB input detected", fw && fw.note || "Windows exposes input only. Enter update mode with LB + RB while connecting USB to access firmware."];
   else if (!ctrl && !bt && !dongle) [cls, title, note] = ["none", "No controller found", "Connect it by cable, or put it in update mode."];
   else if (reading) title = "Reading the firmware…";
   else if (fw && fw.error) [cls, title, note] = ["bad", "Can't read the firmware", fw.error];
@@ -101,7 +111,7 @@ function hero(devs, ctrl, boot) {
 
   const dongleBoot = boot && !!fw && fw.device === "dongle";
   const badge = dongleBoot ? "Update mode · 2.4 GHz dongle" : ctrl ? `${boot ? "Update mode" : "Connected by cable"} · 8BitDo Ultimate 2C Wireless`
-    : dongle ? (dongle.mode === "dongle_paired" ? "2.4 GHz dongle · Controller connected" : "2.4 GHz dongle") : bt ? "Connected over Bluetooth · 8BitDo Ultimate 2C Wireless" : "Not connected";
+    : dongle ? (dongle.mode === "dongle_paired" ? "2.4 GHz dongle · Controller connected" : "2.4 GHz dongle") : bt ? "Connected over Bluetooth · 8BitDo Ultimate 2C Wireless" : inputOnly ? "Connected by USB · XInput only" : "Not connected";
   $("hero").className = "hero compact " + cls;
   $("badge").className = "badge " + (cls === "bad" ? "bad" : boot ? "isboot" : ctrl || bt ? "ok" : "");
   $("badge-text").textContent = badge;
@@ -128,14 +138,15 @@ function showDetails(open) {
 }
 
 function render() {
+  if (typeof simulationRender === "function") simulationRender();
   const devs = st ? st.devices : [];
   const ctrl = devs.find((d) => CONTROLLER.includes(d.mode)), boot = !!ctrl && ctrl.mode === "boot";
-  const isDongleFw = !!fw && fw.device === "dongle", paired = devs.some((d) => d.mode === "dongle_paired");
-  const dongleOnly = (!ctrl && devs.some((d) => d.mode.startsWith("dongle"))) || (boot && isDongleFw);   // also a dongle left in update mode
+  const isDongleFw = !!fw && fw.device === "dongle", paired = (isDongleFw && fw.paired) || devs.some((d) => d.mode === "dongle_paired");
+  const dongleOnly = isDongleFw || (!ctrl && devs.some((d) => d.mode.startsWith("dongle")));   // also a dongle left in update mode
   const dongleReady = dongleOnly && isDongleFw && !paired, dBacked = isDongleFw && fw.backed;
   const mine = fw && fw.unit_backups ? fw.unit_backups : st ? st.backups : [];   // this controller's backups once it has been read
   const backed = mine.length > 0, off = busy || reading, on109 = !!fw && !!fw.version && fw.version.toFixed(2) === "1.09";
-  const patchable = !!ctrl && backed && tweaks().length > 0 && !(fw && fw.known === false && !on109);
+  const patchable = !!ctrl && !!fw && !fw.error && !fw.note && !isDongleFw && backed && tweaks().length > 0 && !(fw && fw.known === false && !on109);
   hero(devs, ctrl, boot);
 
   $("last-backup").textContent = dongleOnly ? (isDongleFw && fw.restore_backup ? lastBackup([fw.restore_backup.name]) : "") : lastBackup(mine);
@@ -150,11 +161,14 @@ function render() {
   pre($("pre-boot"), boot, "In update mode", "Not in update mode");
 
   const xbox = tweakBoxes().find((x) => x.value === "bt_xbox"), rumble = tweakBoxes().find((x) => x.value === "bt_rumble");
-  const long = tweakBoxes().find((x) => x.value === "bt_rumble_long");
-  if (!xbox.checked) rumble.checked = false;
+  const long = tweakBoxes().find((x) => x.value === "bt_rumble_long"), modes = tweakBoxes().find((x) => x.value === "bt_modes");
+  if (!xbox.checked) { rumble.checked = false; if(modes) modes.checked = false; }
   if (!rumble.checked) long.checked = false;
-  tweakBoxes().forEach((x) => { x.disabled = busy || (x === rumble && !xbox.checked) || (x === long && !rumble.checked); x.parentElement.classList.toggle("off", x.disabled); });
-  nameBoxes().forEach((b) => { const on = tweakBoxes().find((x) => x.value === b.dataset.for); b.hidden = !on.checked; b.disabled = busy; });
+  const switch2 = tweakBoxes().find((x) => x.value === "bt_switch2");
+  if (switch2 && ["bt_xbox", "bt_modes", "dim_leds", "settings", "cpu_rest"].some((key) => !tweakBoxes().find((x) => x.value === key)?.checked)) switch2.checked = false;
+  const controllerBlocked = off || !ctrl || !fw || !!fw.error || !!fw.note || isDongleFw;
+  tweakBoxes().forEach((x) => { x.disabled = controllerBlocked || ((x === rumble || x === modes) && !xbox.checked) || (x === long && !rumble.checked); x.parentElement.classList.toggle("off", x.disabled); });
+  nameBoxes().forEach((b) => { const on = tweakBoxes().find((x) => x.value === b.dataset.for); b.hidden = !on.checked; b.disabled = controllerBlocked; });
   $("ctrl-tweaks").hidden = $("tweaks-opts").hidden = dongleOnly; $("dongle-tweaks").hidden = !dongleOnly;
   if (isDongleFw && fw !== dongleRead) {   // each read starts from what's installed
     dongleRead = fw; dongleBoxes().forEach((x) => (x.checked = x.defaultChecked = fw.tweaks.some((t) => t.key === x.value && t.on)));
@@ -168,12 +182,12 @@ function render() {
   $("choose-one").textContent = installWhy; $("choose-one").hidden = !installWhy;
 
   const dRestore = dongleReady && !!fw.restore_backup, dStock = dongleReady && dBacked && fw.stock_ok;
-  const can = dongleOnly ? { backup: !boot, "patch-dry": dongleReady && dBacked, "patch-write": dongleReady && dBacked,
+  const can = dongleOnly ? { backup: true, "patch-dry": dongleReady && dBacked, "patch-write": dongleReady && dBacked,
     "restore-backup-dry": dRestore, "restore-backup": dRestore, "restore-stock-dry": dStock, "restore-stock": dStock, "force-open": false, "report-open": true, "battlog-save": false, refresh: true }
     : { backup: !!ctrl, "patch-dry": patchable, "patch-write": patchable,
     "restore-backup-dry": !!ctrl && !!fw && !!fw.restore_backup, "restore-backup": !!ctrl && !!fw && !!fw.restore_backup, "restore-stock-dry": !!ctrl && backed && on109, "restore-stock": !!ctrl && backed && on109,
     "force-open": boot && backed /* firmware that can't be identified may not know the command that enters update mode */, "report-open": true,
-    "battlog-save": !!ctrl && !boot, refresh: true };
+    "battlog-save": !!ctrl && (!boot || !!fw && fw.device !== "dongle" && !fw.error), refresh: true };
   for (const [id, ok] of Object.entries(can)) $(id).disabled = off || !ok;
   $("backup").classList.toggle("sec", dongleOnly ? dBacked : backed);   // once there's a backup, installing is the main step
   const stockWhy = dongleOnly || !ctrl || !backed || !fw || fw.error || on109 ? "" : fw.version ? `Not available, because this controller has firmware ${fw.version.toFixed(2)}.`
@@ -215,7 +229,6 @@ const WHO = { 0x301b: "The controller", 0x301c: "The 2.4 GHz dongle" };  // the 
 const tweakOrder = (key) => key.startsWith("ring") ? Infinity : tweakBoxes().findIndex((x) => x.value === key);  // as the toggles, the Home ring last
 const firmwareName = () => !fw.known ? "Unknown" : fw.device === "dongle" ? (fw.tweaks.some((t) => t.on) ? `Dongle ${fw.version.toFixed(2)} with ${fw.tweaks.filter((t) => t.on).map((t) => t.title).join(", ")}` : `Original dongle ${fw.version.toFixed(2)}`)
   : fw.recipes.length ? `1.09 with ${fw.recipes.length} ${fw.recipes.length === 1 ? "tweak" : "tweaks"}${fw.titles && fw.titles.length ? `: ${fw.titles.join(", ")}` : ""}` : "Original 1.09";
-const dongleOn = () => fw.tweaks.filter((t) => t.on);
 function details() {
   const box = $("details-body"), inUpdateMode = !!st && st.devices.some((d) => d.mode === "boot");
   const say = (text) => { box.innerHTML = ""; const p = document.createElement("p"); p.style.marginBottom = 0; p.textContent = text; box.append(p); };
@@ -225,8 +238,9 @@ function details() {
   if (fw.note) return say(fw.note);
   const id = fw.boot_identity;
   const v = fw.version ? fw.version.toFixed(2) : "";
+  const dongleTweaksOn = (fw.tweaks || []).filter((t) => t.on);
   const rows = fw.device === "dongle" ? [["Device", fw.paired ? "The 2.4 GHz dongle, with the controller connected through it" : "The 2.4 GHz dongle"],
-    ["Firmware", !fw.known ? (v ? `Unrecognised ${v}` : "Unknown") : dongleOn().length ? [`${v} with ${dongleOn().length} ${dongleOn().length === 1 ? "tweak" : "tweaks"}`, ...dongleOn().map((t) => t.title)] : `Original ${v}`],
+    ["Firmware", !fw.known ? (v ? `Unrecognised ${v}` : "Unknown") : dongleTweaksOn.length ? [`${v} with ${dongleTweaksOn.length} ${dongleTweaksOn.length === 1 ? "tweak" : "tweaks"}`, ...dongleTweaksOn.map((t) => t.title)] : `Original ${v}`],
     ["Identified from", fw.known ? "The installed firmware" : v ? "The dongle's update record" : "Nothing it holds"]] : null;
   if (rows) return detailRows(box, rows);
   const titles = (fw.titles || []).map((t, i) => [tweakOrder(fw.recipes[i] || ""), t]).sort((a, b) => a[0] - b[0]).map((x) => x[1]);
@@ -261,13 +275,15 @@ async function runJob(label, path, body, doneText) {  // doneText: the status wh
   $("dock").className = "dock run"; $("dock-status").textContent = label; $("dock-message").hidden = true;
   $("idle").textContent = `Do not ${onDongle() ? "unplug the dongle" : "disconnect the controller"} or quit the app until this finishes.`; $("idle").hidden = !(body && body.write);
   $("prog").hidden = $("pc").hidden = false; setPct(0);
-  let end = null, started = false;
+  let end = null, started = false, jobId = null;
   try {
-    await api("POST", path, body);
+    const accepted = await api("POST", path, body);
+    jobId = accepted.job;
     started = true;
-    const r = await fetch("/api/events?token=" + encodeURIComponent(token));
+    const r = await fetch("/api/events?token=" + encodeURIComponent(token) + (jobId ? "&job=" + encodeURIComponent(jobId) : ""));
+    if (!r.ok) throw new Error("Progress connection failed: HTTP " + r.status);
     const reader = r.body.getReader(), dec = new TextDecoder(); let buf = "";
-    for (;;) {
+    try { for (;;) {
       const { value, done } = await reader.read(); if (done) break;
       buf += dec.decode(value, { stream: true });
       let i; while ((i = buf.indexOf("\n\n")) >= 0) {
@@ -279,10 +295,32 @@ async function runJob(label, path, body, doneText) {  // doneText: the status wh
         else if (e.type === "done") end = e;
         else if (e.type === "error") { end = e; line(e.message, true); }
       }
+      // The terminal event is authoritative; do not wait for a clean HTTP EOF.
+      if (end) break;
+    } } finally {
+      if (end) reader.cancel().catch(() => {});
+      reader.releaseLock();
     }
-  } catch (e) { line(e.message, true); end = { type: "error", message: started ? LOST : e.message }; }
+  } catch (e) {
+    if (!started) { line(e.message, true); end = { type: "error", message: e.message }; }
+    // If a terminal event arrived, a transport error cannot change its result.
+  }
+  if (!end && started && jobId) {
+    $("dock-status").textContent = "Recovering task status…";
+    let failures = 0;
+    while (!end && failures < 5) {
+      try {
+        const status = await api("GET", "/api/job?job=" + encodeURIComponent(jobId), undefined, AbortSignal.timeout(5000));
+        if (status.result) end = status.result;
+        else if (!status.running) break;
+        failures = 0;
+      } catch (_) { failures++; }
+      if (!end && failures < 5) await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
   end = end || { type: "error", message: LOST };   // the stream ended without saying how the task did
   const ok = end.type === "done";
+  if (ok && path === "/api/backup" && st && st.storage_dir) end = { ...end, message: `${end.message || doneText} Saved in: ${st.storage_dir}` };
   $("dock").className = "dock " + (ok ? "done" : "err"); $("dock-status").textContent = !ok ? "Not completed" : end.unchanged ? "No changes needed" : doneText;
   $("dock-message").textContent = end.message || ""; $("dock-message").hidden = !end.message; $("idle").hidden = true;
   $("prog").hidden = $("pc").hidden = !!end.message;   // the message takes the progress bar's place
@@ -322,13 +360,15 @@ let refreshing = false, refreshAgain = false;  // one read of the controller at 
 async function refresh() {
   if (refreshing) { refreshAgain = true; return; }
   refreshing = true;
+  const previousDevices = st;
   try {
     try { st = await api("GET", "/api/state"); }
     catch (e) { st = { devices: [{ mode: "error", name: "Can't reach the app: " + e.message }], backups: [] }; fw = null; return render(); }
     $("version").textContent = "v" + st.version;
     renderDisclaimer(st.disclaimer);
     if (!st.accepted && !$("disclaimer").open) $("disclaimer").showModal();
-    fw = null; render(); await readFirmware();
+    if (deviceKey(st) !== deviceKey(previousDevices)) fw = null;
+    render(); await readFirmware();
   } finally {
     refreshing = false;
     if (refreshAgain) { refreshAgain = false; refresh(); }
@@ -348,11 +388,16 @@ function matchInstalled() {  // start from what's installed, so installing doesn
 
 let fwSeq = 0;
 async function readFirmware() {  // read-only; skipped while a job runs, and the job buttons wait for it
-  if (busy || !st.devices.some((d) => CONTROLLER.includes(d.mode) || d.mode.startsWith("dongle") || d.mode.startsWith("bluetooth"))) return;
+  if (busy || !st.devices.some((d) => CONTROLLER.includes(d.mode) || d.mode === "xinput_only" || d.mode.startsWith("dongle") || d.mode.startsWith("bluetooth"))) return;
   const mine = ++fwSeq; reading = true; render();
   let f;
   try { f = await api("GET", "/api/firmware"); } catch (e) { f = { error: e.message }; }
   if (mine !== fwSeq) return;
+  // Correct the provisional USB identity once the memory read identifies a
+  // paired receiver. Settings and the connection badge use the same mode.
+  if (f.device === "dongle" && f.paired) {
+    st = {...st, devices: st.devices.map(d => ["cable", "cable_360"].includes(d.mode) ? {...d, enumeratedMode: d.enumeratedMode || d.mode, mode: "dongle_paired"} : d)};
+  }
   fw = f; reading = false; matchInstalled(); render();
 }
 
@@ -375,7 +420,15 @@ function showHelp(part) {  // one section at a time, from the top
 document.querySelectorAll("[data-help]").forEach((b) => (b.onclick = () => showHelp(b.dataset.help)));
 $("help-open").onclick = () => { showHelp(tab === "firmware" ? (onDongle() ? "dongle" : "start") : tab); $("help").showModal(); };  // opens on the tab in view
 $("help-close").onclick = () => $("help").close();
-tweakBoxes().forEach((x) => (x.onchange = render));
+tweakBoxes().forEach((x) => (x.onchange = () => {
+  if (x.value === "bt_switch2" && x.checked) {
+    for (const key of ["bt_xbox", "bt_modes", "dim_leds", "settings", "cpu_rest"]) {
+      const dependency = tweakBoxes().find((box) => box.value === key);
+      if (dependency) dependency.checked = true;
+    }
+  }
+  render();
+}));
 nameBoxes().forEach((b) => b.addEventListener("click", (e) => e.stopPropagation()));   // typing in the box leaves its switch alone
 dongleBoxes().forEach((x) => (x.onchange = render));   // its name box shows with it
 function popover(button, ...content) {  // a small pop-up under an (i) button, outside any label so clicks in it toggle nothing
@@ -458,12 +511,20 @@ $("report-copy").onclick = async () => {
   try { await navigator.clipboard.writeText($("report-text").textContent); $("report-copy").textContent = "Copied"; }
   catch (e) { getSelection().selectAllChildren($("report-text")); }  // then ⌘C
 };
+async function openStore(button) {
+  button.disabled = true;
+  document.querySelectorAll("[data-store-error]").forEach(el => { el.hidden = true; });
+  try { await api("POST", "/api/open-store", {}); }
+  catch (error) { document.querySelectorAll("[data-store-error]").forEach(el => { el.textContent = error.message; el.hidden = false; }); }
+  finally { button.disabled = false; }
+}
+document.querySelectorAll("[data-open-store]").forEach(button => { button.onclick = () => openStore(button); });
 $("battlog-save").onclick = async () => {
   const out = $("battlog-result");
   reading = true; render(); out.hidden = false; out.textContent = "Reading the log…";
   try {
     const r = await api("POST", "/api/battery-log", {});
-    out.textContent = r.error ? r.error : r.records ? `Saved ${r.summary}, as “${r.name}” in the app's folder.`
+    out.textContent = r.error ? r.error : r.records ? `Saved ${r.summary}, as “${r.name}” in: ${r.storage_dir || (st && st.storage_dir) || "the app's folder"}.`
       : "The log is empty. It starts once firmware installed by version 1.1 or later, with Processor rest, runs on battery.";
   } catch (e) { out.textContent = e.message; }
   reading = false; render();
@@ -472,7 +533,7 @@ $("report-close").onclick = () => { $("report").close(); $("report-copy").textCo
 render(); refresh();
 
 // Notice a controller being connected, disconnected or put in update mode, without pressing Refresh.
-const deviceKey = (state) => state ? state.devices.map((d) => `${d.mode}:${d.vendor}:${d.product}:${d.name}`).sort().join() : "";  // a paired dongle has the controller's ID
+const deviceKey = (state) => state ? state.devices.map((d) => `${d.enumeratedMode || d.mode}:${d.vendor}:${d.product}:${d.name}`).sort().join() : "";  // compare enumeration, not the identity corrected by the firmware read
 const WATCH_MS = 2500;
 setInterval(async () => {
   if (busy || reading || refreshing || document.hidden) return;

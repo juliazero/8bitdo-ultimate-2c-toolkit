@@ -18,7 +18,7 @@ const SETTINGS_CARDS = [
     { heading: "Left trigger", rows: [{ field: "lt_start", label: "Starts at", kind: "range", format: percent }, { field: "lt_end", label: "Full at", kind: "range", format: percent }] },
     { heading: "Right trigger", rows: [{ field: "rt_start", label: "Starts at", kind: "range", format: percent }, { field: "rt_end", label: "Full at", kind: "range", format: percent }] },
   ] },
-  { title: "L4 and R4", wide: true, kind: "mapping", text: "Choose what each back button presses. Over Bluetooth, games don't see them unless you map them. Pressing L4 and R4 together changes the Home ring's brightness, and games also receive the buttons you mapped to them." },
+  { title: "L4 and R4", wide: true, kind: "mapping", text: "Choose what each back button presses. Bluetooth D and Y can also report L4 and R4 separately when supported by the game. Hold L4 + R4 for 5 seconds to change Home ring brightness; mapped buttons are still sent to the game." },
   { title: "Vibration", text: "How strongly games make the controller vibrate, on the scale games use: the motors can't turn slower than about a fifth of their speed, so 25 % isn't a quarter of the strength. Battery alerts keep their own strength.", rows: [
     { field: "vibration", label: "Vibration from games", kind: "seg", format: (v) => `${v} %` },
   ] },
@@ -277,7 +277,7 @@ function settingsLive(e) {  // what macOS reports, to see a change's effect stra
 function settingsShow() {
   const b = bridge();
   $("live-note").hidden = false;
-  $("live-note").textContent = b ? "Move a stick or press a trigger to see it here. If nothing moves, macOS isn't seeing the controller by cable as a game controller, which is what the Xbox 360 tweak is for." : "This live view only works in the Mac app. The settings work anyway.";
+  $("live-note").textContent = b ? "Move a stick or press a trigger to see it here." : "Live input is unavailable in this window. The settings work anyway.";
   if (b) b.postMessage({ op: "start" });
 }
 
@@ -308,10 +308,11 @@ function ringAccess() {  // how the card can reach the controller, or why it can
   if (modes.some((m) => m === "cable" || m === "cable_360")) {
     if (!fw) return { note: "Reading the firmware…" };
     if (fw.outdated) return { note: "This firmware has the Home ring from an earlier version. Install the tweaks again to change it here." };
-    if (fw.ring_level === undefined || fw.ring_level === null) return { note: "Install the tweaks from the Firmware tab to change the ring here. Its code comes with Battery alerts, Controller settings, Fixes and Processor rest." };
+    if (fw.ring_level === undefined || fw.ring_level === null) return { note: "Install the tweaks from the Firmware tab to change the ring here. Its code comes with Battery alerts, Controller settings, Connection and idle fixes and Processor rest." };
     return { via: "cable" };
   }
   if (modes.includes("bluetooth_xbox")) return bridge() ? { via: "bluetooth" } : { note: "Over Bluetooth, this only works in the Mac app." };
+  if (modes.includes("bluetooth")) return { note: "Home ring control over Bluetooth requires the XInput mode over Bluetooth and Rumble over Bluetooth tweaks. In standard Bluetooth mode, use a direct USB connection or L4 + R4 to change brightness when the Home ring tweak is installed." };
   return { note: "Connect the controller by Bluetooth or cable." };
 }
 
@@ -321,7 +322,7 @@ function ringRender() {
   document.querySelectorAll("[data-live]").forEach((b) => { b.disabled = off; setOn(b, +b.dataset.live === ringLevel); });
   $("ring-save").disabled = off;
   $("ring-note").textContent = access.note || ringMessage || (access.via === "bluetooth"
-    ? "This needs the Home ring and Rumble over Bluetooth tweaks. A change lasts until you turn the controller off, unless you save it."
+    ? "Current brightness is not reported over Bluetooth, so no level is selected until you send one. This needs the Home ring and Rumble over Bluetooth tweaks. A change lasts until you turn the controller off, unless you save it."
     : "A change lasts until you turn the controller off, unless you save it.");
 }
 
@@ -332,10 +333,13 @@ function ringDone(error, level, save) {
   else {
     if (level !== null) ringLevel = level;
     const ifTweaks = "If the Home ring and Rumble over Bluetooth tweaks are installed";
-    if (ringVia === "bluetooth") ringMessage = save ? `Sent. ${ifTweaks}, the controller keeps this level when you turn it off.` : `Sent. ${ifTweaks}, the ring changes at once, until you turn the controller off or save it.`;
+    if (ringVia === "bluetooth") ringMessage = save
+      ? `Save command sent. ${ifTweaks}, the controller keeps its level when you turn it off. Bluetooth does not report the current or saved brightness.`
+      : `Last sent level selected. ${ifTweaks}, the ring changes at once, until you turn the controller off or save it. Bluetooth does not report later changes made on the controller.`;
     else ringMessage = save ? "Saved. The controller keeps this level when you turn it off." : "Sent. Save it if you want to keep it after turning the controller off.";
   }
   ringRender();
+  if (!error && save && ringVia === "cable" && typeof readFirmware === "function") readFirmware();
 }
 
 async function ringSend(level, save) {

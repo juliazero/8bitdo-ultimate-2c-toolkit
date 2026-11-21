@@ -14,10 +14,10 @@ The Linux port shares the firmware, backup, restore and web application logic wi
 From the repository root:
 
 ```sh
-./install-linux.sh
+./linux/install.sh
 ```
 
-If the installer doesn't run (a copy without the executable bit), use `bash install-linux.sh`. The installer creates `.venv`, installs the Python package and installs `udev/70-8bitdo-ultimate-2c.rules` using `sudo`. Unplug and reconnect the controller and dongle after installation. `TAG+="uaccess"` grants permissions to an active local desktop session with systemd-logind; headless setups may need custom permissions. **Do not run the toolkit as root.**
+If the installer doesn't run (a copy without the executable bit), use `bash linux/install.sh`. The installer creates `.venv`, installs the Python package and installs `udev/70-8bitdo-ultimate-2c.rules` using `sudo`. Unplug and reconnect the controller and dongle after installation. `TAG+="uaccess"` grants permissions to an active local desktop session with systemd-logind; headless setups may need custom permissions. **Do not run the toolkit as root.**
 
 Manual installation is also possible:
 

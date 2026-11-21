@@ -11,4 +11,15 @@ The Settings tab changes the controller while it's connected by cable, once the 
 - **Calibration:** a guide to the controller's own stick calibration. The app doesn't send it anything.
 - **Home ring:** its brightness, applied at once and kept with Save Ring Level. This also works over Bluetooth, with Rumble over Bluetooth installed.
 
+Over Bluetooth the current firmware accepts brightness and save commands but does
+not return the current or saved level. On first opening Settings no level is
+selected. After a command, the highlighted level is the last one sent by this
+page, not a live reading; it cannot track changes made with L4 + R4. Reading the
+actual brightness over Bluetooth would require a firmware protocol extension.
+
 With every setting at its default, the sticks, triggers and buttons run the firmware's original code. The live view is only available in the Mac app; the settings work anyway.
+
+Home ring shortcut: hold physical L4 and R4 together continuously for 5 seconds.
+A short tap does nothing. Each hold advances one level; release either paddle
+before another hold. The chosen level is saved after the existing 3-second delay.
+Reinstall the tweaks to update controllers with the previous immediate shortcut.

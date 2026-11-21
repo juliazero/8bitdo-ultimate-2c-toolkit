@@ -17,8 +17,9 @@ Select the new backend in `u2c_customfw/transport/__init__.py`. Keep the firmwar
 
 ## Diagnostics and permissions
 
-The diagnostics interface is platform-specific: macOS uses GameController, while Linux uses evdev. A new platform needs its own input and optional force-feedback bridge, or must clearly mark unsupported diagnostics.
+The diagnostics interface is platform-specific: macOS uses GameController, Linux uses evdev, and Windows uses the browser Gamepad API. A new platform needs its own input and optional force-feedback bridge, or must clearly mark unsupported diagnostics.
 
 Document device permissions and reconnect behavior for the new platform. Test enumeration, read-only firmware operations, update-mode transitions, backup and restore before attempting any firmware write. A successful bootloader transition alone does not validate flashing.
 
 For the existing Linux implementation, see [linux.md](linux.md).
+For Windows HIDAPI installation and validation status, see [windows.md](windows.md).

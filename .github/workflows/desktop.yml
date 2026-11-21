@@ -1,0 +1,45 @@
+name: desktop packages
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+  pull_request:
+    paths:
+      - 'u2c_customfw/**'
+      - 'tools/build_desktop.py'
+      - 'linux/**'
+      - 'windows/**'
+      - 'pyproject.toml'
+      - '.github/workflows/desktop.yml'
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[desktop]' 'pyinstaller==6.22.3' 'Pillow==12.3.0'
+      - if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libusb-1.0-0 xvfb libegl1 libopengl0 libxkbcommon-x11-0 libxcb-cursor0 libnss3 libasound2
+          curl --fail --location --retry 3 -o appimagetool https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          echo 'ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  appimagetool' | sha256sum --check
+          chmod +x appimagetool
+          xvfb-run -a bash linux/build-appimage.sh ./appimagetool
+      - if: runner.os == 'Windows'
+        run: powershell -ExecutionPolicy Bypass -File windows/build.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-toolkit-${{ runner.os }}
+          path: |
+            dist/*.zip
+            dist/*.AppImage
+            dist/*.sha256
+          if-no-files-found: error

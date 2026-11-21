@@ -26,7 +26,8 @@ def read(ch, addr: int, n: int, tries: int = 3) -> bytes | None:
     def answers(r):
         return (len(r) >= 18 + n and r[0:3] == b"\x02\x05\x00" and r[4] == 0x05
                 and int.from_bytes(r[6:8], "little") == n and int.from_bytes(r[14:18], "little") == addr)
-    for _ in range(tries):
+    for attempt in range(tries):
+        if attempt: time.sleep(min(.02 * (3 ** (attempt-1)), .18))
         r = ch.xfer(_req(addr, n), accept=answers)
         if r and answers(r):
             return r[18:18 + n]
