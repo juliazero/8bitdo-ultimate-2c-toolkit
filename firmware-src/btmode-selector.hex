@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Experimental TC32 leaf routine: r0 button word; r1 saved mode (0 D, 1 X, FF unset).
+# Return 0 D-input / 1 Xbox. B overrides to D, X overrides to Xbox; otherwise
+# preserve saved D/X, default Xbox only when unset. Caller must persist overrides.
+# Not an installable patch: no startup hook, flash save or GATT initialization.
+# movs r2,1; lsls r2,r2,12; tst r0,r2; bne d;
+# movs r2,16; tst r0,r2; bne x; cmp r1,0; beq d;
+# x: movs r0,1; bx lr; d: movs r0,0; bx lr.
+01 a2 12 f3 10 02 06 c1 10 a2 10 02 01 c1 00 a9 01 c0 01 a0 70 07 00 a0 70 07
