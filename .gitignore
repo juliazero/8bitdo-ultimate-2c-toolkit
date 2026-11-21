@@ -8,5 +8,6 @@ dist/
 build/
 .superpowers/
 .venv/
+.venv-windows/
 *.egg-info/
 test-results.log

@@ -14,13 +14,18 @@ Microsoft Edge WebView2 Runtime is required (normally already present on Windows
 10/11). If missing, install it from [Microsoft](https://developer.microsoft.com/microsoft-edge/webview2/).
 The build is currently unsigned; it does not install a driver or require admin rights.
 
-To build on Windows with Python 3.12:
+To build on Windows, install **64-bit Python 3.12** (3.13/3.14 also supported)
+and run:
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[desktop]" pyinstaller==6.22.3 Pillow==12.3.0
-powershell -ExecutionPolicy Bypass -File windows/build.ps1
+.\windows\build.ps1
 ```
+
+The script creates a dedicated `.venv-windows` environment automatically,
+installs the desktop dependencies and prebuilt `hidapi==0.15.0` wheel, then
+builds the EXE. It will not attempt to compile `hidapi` with MSVC. Use
+`-RecreateVenv` after changing Python versions; `-SkipInstall` skips dependency
+installation when they are already installed. See [Windows](../windows/README.md).
 
 The ZIP and its SHA-256 file are written to `dist/`.
 

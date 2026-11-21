@@ -106,6 +106,15 @@ This project builds on the reverse engineering of [jgus-org/8bitdo-2c-re-flake](
 
 GPL-3.0-or-later; see `LICENSE`. 8BitDo firmware is not included in this repository. Not affiliated with or endorsed by 8BitDo.
 
+## Experimental Bluetooth Y: firmware and triggers
+
+The Switch 2 Pro Controller report exposes **digital ZL/ZR**, not analog LT/RT.
+For smooth 0–100% analog triggers use the Xbox Bluetooth X profile. An NSO
+GameCube-compatible mode would require a separate BLE identity and report
+implementation. The Y haptic decoder is an experimental source-level change;
+prebuilt Y firmware blobs have not been regenerated. See
+[building the Y firmware](docs/switch2-build.md) before attempting a device test.
+
 ## Desktop packages
 
 Build **Windows EXE + portable ZIP** on Windows, or a **Linux AppImage** on Linux

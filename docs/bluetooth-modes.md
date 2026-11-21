@@ -82,8 +82,8 @@ switching still require physical validation. The resident bootloader is not modi
 
 ## Nintendo Y profile
 
-A Nintendo Switch 2 Pro profile is not implemented. Its BLE interface and key
-exchange are proprietary, rather than standard HID-over-GATT plus SMP. A useful
+The Switch 2 Pro profile is experimental and separately documented below. Its BLE interface and key
+exchange are proprietary, rather than standard HID-over-GATT plus SMP. A complete
 implementation needs the GATT endpoints, command/response initialization,
 input encoding and console pairing; changing the name or VID/PID is insufficient.
 Primary reverse-engineering reference:
@@ -121,9 +121,15 @@ sectors are erased and normal D/X behavior is restored.
 With USB disconnected and the rear switch on Bluetooth, hold Y while pressing
 Home from power-off. Select Y at every startup; Home without Y restores the saved
 D/X mode. Y has its own Bluetooth address and pairing record. This is the Pro 2
-BLE experiment for Switch 2, with buttons, sticks and battery reporting. It has
-no rumble, motion, NFC or audio support yet and has not been verified on hardware
-or a console. Normal D/X haptics are separate from this experimental profile.
+BLE experiment for Switch 2, with buttons, sticks and battery reporting. It has no motion, NFC or audio support and has not been verified on hardware
+or a console. An experimental HD-Rumble-to-ERM translator is implemented in
+`firmware-src/switch2-rumble.h`, but **the checked-in Y firmware blobs predate
+this change**. To enable it, rebuild the experimental payload with a TC32
+compiler and a verified stock backup (see [firmware build](switch2-build.md)).
+Normal D/X haptics remain independent. The translator approximates per-grip
+amplitude, discards frequencies and maps short samples to the two ordinary
+8BitDo motors; it cannot reproduce Nintendo's HD Rumble fidelity. Stop packets
+and disconnects explicitly stop both motors. Verify motor safety on hardware.
 
 ### Y profile: LT/RT behave as digital ZL/ZR
 
@@ -137,8 +143,13 @@ crosses its threshold. Consequently, pushing LT/RT to roughly halfway produces
 an abrupt 0-to-1 transition in Y mode. This is expected for the emulated
 Nintendo profile, not a loss of analog precision in the controller's sensors.
 
-An analog trigger response requires another input protocol/profile (for example,
-the Xbox-compatible X profile); inventing analog axes in a Nintendo Pro report
-would not make Nintendo games interpret them as analog triggers. Any future
-change to the threshold or button mapping should be verified on physical
-hardware before flashing firmware.
+To get the full analog 0–100% range, use the Xbox-compatible X profile, which
+already transmits both LT/RT values. **Nintendo's Pro Controller 2 HID report has
+no analog trigger fields**, so implementing an interpolated 0–100% response in
+this Y profile would not be interpreted by the host. The Switch 2 NSO GameCube
+controller supports analog triggers, but using its report format also requires
+reimplementing the matching BLE identity, HID characteristics and initialization
+sequence; simply writing two bytes into the Pro report is incorrect. See
+https://github.com/ndeadly/switch2_controller_research/blob/master/hid_reports.md.
+Any GameCube-compatible Y variant would need separate integration and
+hardware/console verification before flashing firmware.

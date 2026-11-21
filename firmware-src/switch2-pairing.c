@@ -92,27 +92,46 @@ static __attribute__((noinline)) u32 durable_commit(const u8 *request,u32 length
     }
     return result;
 }
+#include "switch2-rumble.h"
 int y_att_write(u8 *packet) {
-    u32 length,needed,sub;
-    if(packet[6]!=0x52 || (packet[7]!=0x14 && packet[7]!=0x16) || packet[8]) return 1;
+    const u8 *request;
+    u32 length,needed,sub,handle;
+    if(packet[6]!=0x52 || packet[8]) return 1;
+    handle=packet[7];
+    if(handle!=0x12 && handle!=0x14 && handle!=0x16) return 1;
     length=packet[2]|((u32)packet[3]<<8);
-    if(length<11 || length>Y_MTU || (Y_REPLY_CCC!=1 && Y_ALT_REPLY_CCC!=1) || Y_PENDING) return 1;
+    if(length<3 || length>Y_MTU) return 1;
     length-=3;
-    sub=packet[12];
-    if(packet[9]==2) {if(length!=16) return 1;needed=16+packet[17];}
-    else if(packet[9]==0x16) needed=32;
-    else if(packet[9]==0x11 && sub==3) needed=37;
-    else if(packet[9]==0x15) needed=(sub==1 ? 17 : sub==3 ? 9 : 25);
-    else needed=(packet[9]==0x10 || (packet[9]==0x0c && sub==1))?20:12;
+    request=packet+9;
+    if(handle==0x12) {
+        if(length==33) y_rumble_write(request,33);
+        return 1;
+    }
+    if(handle==0x16) {
+        /* Pro 2 combined output: 33 vibration bytes followed by a command. */
+        if(length<33) return 1;
+        y_rumble_write(request,33);
+        request+=33;length-=33;
+        if(!length) return 1;
+    }
+    if(length<8 || (Y_REPLY_CCC!=1 && Y_ALT_REPLY_CCC!=1) || Y_PENDING) return 1;
+    sub=request[3];
+    if(request[0]==2) {if(length!=16) return 1;needed=16+request[8];}
+    else if(request[0]==0x16) needed=32;
+    else if(request[0]==0x11 && sub==3) needed=37;
+    else if(request[0]==0x15) needed=(sub==1 ? 17 : sub==3 ? 9 : 25);
+    else needed=(request[0]==0x10 || (request[0]==0x0c && sub==1))?20:12;
     if(needed+3>Y_MTU) return 1;
-    if(packet[9]==0x15 && sub==3) length=durable_commit(packet+9,length);
-    else length=y_command_request(Y_CTX,packet+9,length,Y_REPLY);
+    if(request[0]==0x15 && sub==3) length=durable_commit(request,length);
+    else length=y_command_request(Y_CTX,request,length,Y_REPLY);
     if(length) {Y_PENDING=length;y_reply_poll();}
     return 1; /* consumed: SDK must not copy command bytes into a backing value */
 }
+
 void y_att_disconnect(void) {
     *(volatile u8 *)0x843bfa=0; /* discard any partial L2CAP command */
     y_pair_disconnect(Y_CTX);
+    motor_set(0,0,0); /* a disconnected Y session must not retain a haptic hold */
     *(volatile unsigned short *)0x8412ca=0;
     *(volatile unsigned short *)0x8412cc=0;
     *(volatile unsigned short *)0x8412ce=0;

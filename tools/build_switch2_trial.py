@@ -79,7 +79,7 @@ def assemble(stock,build):
         out[pc-image.BASE:pc-image.BASE+4]=bl(pc,c.labels[label])
     return bytes(out),{'experimental':True,'hardware_tested':False,'console_tested':False,
         'activation':'Hold X/B/Y while powering on in Bluetooth; Home alone restores the last mode. While on, hold Home+X/B/Y for 3 seconds to restart in that mode.',
-        'persistent_y_selection':True,'vibration_supported':False,'keys':KEYS,
+        'persistent_y_selection':True,'vibration_supported':'experimental_erm_translation','keys':KEYS,
         'app_start':image.BASE,'app_end':END,'bytes':len(out),'sha256':hashlib.sha256(out).hexdigest(),
         'dispatch':c.labels,'startup_target':original(0xa4b8),'active_byte':ACTIVE,'ordinary_targets':{hex(pc):original(pc) for pc in (0xa138,0xa184,0xa2e4,0xa478)},
         'installation':'Use the generated full-backup image with explicit restore backup --backup PATH. Bootloader mode required. No automatic installation.'}

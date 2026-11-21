@@ -48,7 +48,7 @@ def build(output):
            (0x2a,"ab7de9be-89fe-49ad-828f-118f09df7fdf",4))
     ccc={};placeholder=[]
     for handle,type_uuid,props in chars:
-        if handle in (0x14,0x16):
+        if handle in (0x12,0x14,0x16):
             characteristic(handle,type_uuid,props,permissions=WRITE,ram=layout.Y_REPLY,length=0,
                            callback=symbols["y_att_write"]|1)
         elif handle==0xa:
