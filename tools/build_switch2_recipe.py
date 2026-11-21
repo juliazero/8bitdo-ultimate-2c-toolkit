@@ -3,7 +3,6 @@
 import argparse,hashlib
 from pathlib import Path
 from tools.build_switch2_trial import assemble,KEYS,END
-from tools.build_ring_hold import bl
 from u2c_customfw.firmware import image,recipes
 
 REGIONS=((0x14a62,4),(0x7738,156),(0xa138,4),(0xa184,4),(0xa2e4,4),(0xa478,4),
@@ -18,9 +17,7 @@ def export(stock,build,output):
     output.mkdir(parents=True,exist_ok=True)
     for address,size in REGIONS:
         (output/f'switch2-{address:x}.bin').write_bytes(frame[address-image.BASE:address-image.BASE+size])
-    for address,label in ((0xa4b8,'force_start'),(0xa138,'force_identity'),(0xa184,'y_bonds')):
-        (output/f'switch2-force-{address:x}.bin').write_bytes(bl(address,report['dispatch'][label]))
-    return len(REGIONS)+3
+    return len(REGIONS)
 
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--backup',type=Path,required=True)

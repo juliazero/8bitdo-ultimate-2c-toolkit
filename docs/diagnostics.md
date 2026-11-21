@@ -72,3 +72,9 @@ USB D-input or update mode for firmware operations; do not confuse the dongle
 with a direct USB controller. No validated battery query is currently known
 for the Ultimate 2C 2.4 GHz receiver. The application does not send battery
 queries to that receiver or infer percentage from unrelated bytes.
+
+## Switch 2 Pro mode (Y) vibration diagnostics
+
+See [Switch 2 rumble diagnostics](switch2-rumble-diagnostics.md) for obtaining
+Switch2Connect's actual console log and narrowing down BLE write vs firmware
+motor output failures. This does not require reflashing the controller.

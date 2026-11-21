@@ -20,7 +20,9 @@ from tools.build_switch2_recipe import REGIONS
 
 def run(*args):
     print('+', ' '.join(map(str, args)), flush=True)
-    subprocess.run([sys.executable, *map(str, args)], cwd=ROOT, check=True)
+    script = str(args[0])
+    command = [sys.executable, "-m", script.removesuffix(".py").replace("/", "."), *map(str, args[1:])]
+    subprocess.run(command, cwd=ROOT, check=True)
 
 
 def rebuild(compiler: Path, stock: Path):
@@ -47,19 +49,15 @@ def rebuild(compiler: Path, stock: Path):
         run('tools/build_switch2_gatt.py', '--build', build)
         run('tools/build_switch2_recipe.py', '--backup', stock, '--build', build, '--output', stage)
         expected = {f'switch2-{address:x}.bin':size for address,size in REGIONS}
-        expected.update({f'switch2-force-{a:x}.bin':4 for a in (0xa4b8,0xa138,0xa184)})
         for name, size in expected.items():
             output = stage / name
             if not output.is_file() or output.stat().st_size != size:
                 raise ValueError(f'Unexpected compiled blob: {name} expected {size} bytes')
-        # Keep old switch2 patch recognizable so the app can diagnose/migrate it.
-        # Do this before installing the new one; never overwrite the historic copy.
-        for name in expected:
-            old = BLOBS / name
-            if old.is_file() and old.read_bytes() != (stage/name).read_bytes():
-                old_copy = BLOBS / (name[:-4] + '-prerumble.bin')
-                if not old_copy.exists():
-                    old_copy.write_bytes(old.read_bytes())
+        # Only current Y blobs are shipped. Do not regenerate legacy
+        # experimental compatibility files when rebuilding.
+        for pattern in ('switch2-*-pre*.bin', 'switch2-force-*.bin'):
+            for obsolete in BLOBS.glob(pattern):
+                obsolete.unlink()
         for name in expected:
             os.replace(stage / name, BLOBS / name)
         manifest = BLOBS / 'MANIFEST'

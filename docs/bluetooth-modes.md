@@ -121,17 +121,20 @@ sectors are erased and normal D/X behavior is restored.
 With USB disconnected and the rear switch on Bluetooth, hold Y while pressing
 Home from power-off. Select Y at every startup; Home without Y restores the saved
 D/X mode. Y has its own Bluetooth address and pairing record. This is the Pro 2
-BLE experiment for Switch 2, with buttons, sticks and battery reporting. It has no motion, NFC or audio support and has not been verified on hardware
-or a console. An experimental HD-Rumble-to-ERM translator is implemented in
-`firmware-src/switch2-rumble.h`, but **the checked-in Y firmware blobs predate
-this change**. To enable it, rebuild the experimental payload with a TC32
-compiler and a verified stock backup (see [firmware build](switch2-build.md)).
-Normal D/X haptics remain independent. The translator approximates per-grip
-amplitude, discards frequencies and maps short samples to the two ordinary
-8BitDo motors; it cannot reproduce Nintendo's HD Rumble fidelity. The corrected source handles the full 42-byte output report on GATT 0x0012,
-41-byte-or-longer combined output on 0x0016, and active-hold stop packets.
-Stop packets and disconnects explicitly stop both motors. Verify motor safety
-on hardware after compiling and installing the revised firmware.
+BLE experiment for Switch 2, with buttons, sticks and battery reporting. It has no motion, NFC or audio support and has not been verified on a
+Nintendo Switch 2 console. The bundled `bt_switch2` tweak now includes the
+compiled HD-Rumble-to-ERM translator in its `switch2-*` firmware blobs; ordinary
+Windows builds install these precompiled blobs and do **not** need TC32.
+
+On this experimental profile, Home is read from the physical Home button
+register (`0x84344c`, bit 17) so pressing Start + Select does not synthesize
+Home. ZL/ZR retain their original digital trigger thresholds.
+
+Vibration reports on GATT `0x0012` (42 bytes) and combined reports on `0x0016`
+are mapped onto the two 8BitDo ERM motors. Bare Nintendo command requests on
+`0x0016` are also accepted during initialization. A 20-tick bounded motor
+hold bridges normal BLE report spacing; explicit zero-amplitude reports stop
+the motors. This only approximates HD Rumble and requires physical validation.
 
 ### Y profile: LT/RT behave as digital ZL/ZR
 
@@ -155,3 +158,22 @@ sequence; simply writing two bytes into the Pro report is incorrect. See
 https://github.com/ndeadly/switch2_controller_research/blob/master/hid_reports.md.
 Any GameCube-compatible Y variant would need separate integration and
 hardware/console verification before flashing firmware.
+
+### Experimental Y: Start+Select and vendor vibration commands
+
+The Switch 2 Pro profile does not report Home while both Start and Select
+are down, even if the stock firmware asserts the Home bit in its button
+word. This deliberately masks the unusual three-button Home+Start+Select
+combination as well. The normal physical Home button remains mapped.
+
+In addition to GATT `0x0012` HD Rumble reports, Nintendo sends vibration
+vendor commands on GATT `0x0016` (`0x0A/0x02` for predefined samples and
+`0x0A/0x08` for its separate vibration envelope). The selectable `bt_switch2`
+firmware now recognises both commands: sample IDs 0 through 7 are approximated
+with bounded conventional motor pulses; `0x0A/0x08` is acknowledged but its
+undocumented 20-byte envelope is **not** interpreted as HD Rumble. This does
+not prove that all Switch2Connect rumble tests will work. The real BLE input
+and vibration command path must be tested on physical hardware.
+
+The build ships the compiled Y blob in `u2c_customfw/firmware/blobs/`; normal
+Windows application builds do not require TC32 or a private `build/` directory.

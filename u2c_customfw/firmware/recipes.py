@@ -295,22 +295,9 @@ RECIPES["bt_switch2"] = Recipe("bt_switch2", "Switch 2 Pro Controller mode (Y)",
     ("bt_modes", "dim_leds", "settings", "cpu_rest"), tuple(
         Edit(address, _blob(f"switch2-{address:x}.bin"))
         for address in (0x7738,0xa138,0xa184,0xa2e4,0xa478,0xa4b8,0xa22a,0xa23a,0xd156,0x11938,0x11a00,0x14a62,0x1a000)))
-RECIPES["bt_switch2"] = replace(RECIPES["bt_switch2"], edits=tuple(
-    replace(e,superseded_by="bt_switch2_force") if e.addr in (0xa138,0xa184,0xa4b8) else e
-    for e in RECIPES["bt_switch2"].edits))
-RECIPES["bt_switch2_force"] = Recipe("bt_switch2_force", "Bluetooth: force Y at startup (diagnostic)",
-    ("bt_switch2",), tuple(Edit(a,_blob(f"switch2-force-{a:x}.bin")) for a in (0xa138,0xa184,0xa4b8)), earlier_form_of="bt_switch2")
-
-# Keep the previously distributed diagnostic payload recognizable, never offered.
-for _key in ("bt_switch2", "bt_switch2_force"):
-    _edits = []
-    for _edit in RECIPES[_key].edits:
-        _prefix = "switch2-force" if _key.endswith("force") else "switch2"
-        _previous = tuple(BLOBS / f"{_prefix}-{_edit.addr:x}-{suffix}.bin"
-                          for suffix in ("preindicator", "prememory", "prediscovery", "prehostlist", "prerx", "prevertical", "prerumble"))
-        _accepted = tuple(path.read_bytes() for path in _previous if path.is_file())
-        _edits.append(replace(_edit, accepts=_edit.accepts+_accepted))
-    RECIPES[_key] = replace(RECIPES[_key], edits=tuple(_edits))
+# Only current Y patch bytes are recognized. Earlier experimental blobs are
+# intentionally not accepted; unknown test firmware must be restored from a
+# verified backup rather than silently migrated through obsolete patches.
 
 
 

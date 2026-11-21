@@ -13,11 +13,13 @@
 #define MTU (*(volatile unsigned short *)0x842f22)
 #define PENDING (*(volatile u8 *)0x8424f4)
 #define SHADOW ((volatile u8 *)0x841790)
+#define Y_SHADOW_STORED_LENGTH 63u
+extern void motor_set(u32 strong,u32 weak,u32 hold);
 extern int ble_notify(int,int,u8 *,int);
 void y_input_reset(void) {
     u32 i;
     MASK=0;ENABLED=3;CONFIGURED=0;COUNTER=0;PLAYER=0;
-    for(i=0;i<63;i++) SHADOW[i]=0;
+    for(i=0;i<Y_SHADOW_STORED_LENGTH;i++) SHADOW[i]=0;
     SHADOW[6]=8;SHADOW[7]=128;SHADOW[9]=8;SHADOW[10]=128;SHADOW[11]=0x30;
 }
 static u32 unsupported(const u8 *r,u8 *out) {
@@ -40,6 +42,21 @@ u32 y_command_request(struct y_pairing *ctx,const u8 *r,u32 length,u8 *out) {
         if(!size && sub==3 && n==1 && !r[8]) return unsupported(r,out);
         return size;
     }
+    /* Nintendo uses vendor command 0x0A for haptic samples and data on
+     * GATT 0x0016. These are NOT 33-byte HD Rumble output reports.
+     * Translate the documented predefined sample IDs into bounded ERM
+     * pulses. The stock motor routine treats hold as its own timer unit. */
+    if(command==0x0a && sub==2 && n==4 && !r[9] && !r[10] && !r[11] && r[8]<=7) {
+        static const u8 level[8]={0,90,140,80,110,150,115,125};
+        static const u8 ticks[8]={1,80,35,16,45,24,15,15};
+        motor_set(level[r[8]],level[r[8]],ticks[r[8]]);
+        size=8;
+        goto success;
+    }
+    /* 0x0A/0x08 holds a separate Nintendo vendor vibration envelope.
+     * Recognise it and ACK it, but do not pretend its 20 bytes are a
+     * full HD Rumble frame until the encoding is confirmed on hardware. */
+    if(command==0x0a && sub==8 && n==20) {size=8;goto success;}
     if((command==3 && sub==0x0d && n==8 && r[8]==1 && !r[9]) ||
        (command==0x0a && ((sub==8 && n==20) || (sub==2 && n==4))) ||
        (command==1 && ((sub==0x0c && !n) || (sub==1 && n==4))))
@@ -77,13 +94,14 @@ u32 y_command_request(struct y_pairing *ctx,const u8 *r,u32 length,u8 *out) {
         else if(sub==4) ENABLED|=r[8]&MASK;
         else ENABLED&=~(r[8]&MASK);
     } else return 0;
+success:
     out[0]=command;out[1]=1;out[2]=1;out[3]=sub;
     out[4]=0x10;out[5]=0x78;out[6]=0;out[7]=0;
     return size;
 }
-static void native_packet(u8 *p,const struct y_input *input) {
+static void native_packet(u8 *p,const struct y_input *input,u32 capacity) {
     u32 i,buttons,x,y;
-    for(i=0;i<63;i++) p[i]=0;
+    for(i=0;i<capacity;i++) p[i]=0;
     p[0]=COUNTER;p[1]=(input->battery_level<<2)|input->power_flags;
     buttons=(ENABLED&1)?input->buttons:0;
     p[2]=buttons;p[3]=buttons>>8;p[4]=buttons>>16;
@@ -123,16 +141,16 @@ int y_input_send(const struct y_input *input) {
     if(input->battery_level>9 || (input->power_flags&~3u) || (input->buttons&~0x1fffffu)) return -1;
     for(i=0;i<4;i++) if(input->sticks[i]>4095) return -1;
     common=COMMON_CCC==1 && (INPUT_CCC!=1 || (COUNTER&1));
-    if(common) {if(!common_packet(p,input)) return -1;}else native_packet(p,input);
+    if(common) {if(!common_packet(p,input)) return -1;}else native_packet(p,input,63);
     result=ble_notify(0x40,common?0xa:0xe,p,63);
     if(!result) {
         if(common) {
-            native_packet((u8 *)SHADOW,input);
+            native_packet((u8 *)SHADOW,input,Y_SHADOW_STORED_LENGTH);
             irq=*(volatile u8 *)0x800643;*(volatile u8 *)0x800643=0;
             if(CTX->stage==0 || CTX->stage==4)
                 for(i=0;i<4;i++) if(++CTX->pending_ltk[i]) break;
             *(volatile u8 *)0x800643=irq;
-        } else for(i=0;i<63;i++) SHADOW[i]=p[i];
+        } else for(i=0;i<Y_SHADOW_STORED_LENGTH;i++) SHADOW[i]=p[i];
         COUNTER++;
     }
     return result;
@@ -150,6 +168,16 @@ int y_input_from_controller(void) {
     struct y_input input;u32 i,word,value,percent;
     word=*(volatile u32 *)0x84342c;input.buttons=0;
     for(i=0;i<20;i++) if(source[i]!=255 && (word&(1u<<source[i]))) input.buttons|=1u<<i;
+    /* Stock's processed button word can synthesize HOME for Start+Select.
+     * Switch 2 reports should track the actual physical Home switch instead.
+     * Raw bit 17 is also used by the existing Y mode selector. */
+    /* A Start+Select chord can synthesize bit 17 even in RAW. Do not
+     * advertise that synthetic Home as a physical Switch 2 Home event.
+     * The rare three-button chord Start+Select+Home is deliberately masked. */
+    if((*(volatile u32 *)0x84344c & (1u<<17)) &&
+       (word&((1u<<0)|(1u<<3)))!=((1u<<0)|(1u<<3)))
+        input.buttons|=1u<<16;
+    else input.buttons&=~(1u<<16);
     for(i=0;i<4;i++) {
         value=*(volatile unsigned short *)axes[i];
         if(value==32767 || value==32768) value=2048;

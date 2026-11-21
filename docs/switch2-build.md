@@ -12,17 +12,17 @@ preserves the command offset. A zero-amplitude report stops the ordinary
 8BitDo motors with a one-tick zero-strength command so an active hold cannot
 ignore the stop.
 
-These changes are **source-only until the Y code is compiled with TC32**.
-Rebuilding the Windows desktop EXE does not update the controller firmware.
-The existing embedded `switch2-*` blobs are not updated by this change.
-No hardware or console validation has been performed. First validate the
-resulting full image against a verified stock backup, then test vibration
-in Y mode using a host that sends Pro Controller 2 reports to GATT 0x0012.
+The current repo includes rebuilt blobs for `bt_switch2`, including the
+physical Home fix, bare-command handling on `0x0016`, and the bounded motor
+hold. Building the desktop EXE uses these checked-in binaries and does not
+require the TC32 toolchain. A TC32 rebuild is necessary only for maintainers
+changing the Y firmware sources. Build artifacts, toolchains, and stock backups
+remain outside Git.
 
-The checked-in `u2c_customfw/firmware/blobs/switch2-*` files are **precompiled**.
-Changing `firmware-src/switch2-*.c` or `switch2-rumble.h` does not alter what the
-ordinary toolkit installs. Do not assume the HD-rumble source change is present
-in the existing binaries.
+Offline checks include `tools/check_switch2_input.py` and
+`tools/check_switch2_rumble_wire.py` with `--backup` and `--build` flags. Their
+TC32 instruction-level simulations exercise real GATT callback dispatch, not
+physical BLE radio or motors. Hardware validation is still required.
 
 Prerequisites: the Telink **TC32** cross-compiler (not system GCC), Python 3.12+
 and a complete 512-KiB backup made from your own device containing a verified

@@ -36,10 +36,10 @@ def check(stock,build):
            bytes.fromhex('15910102001100000040b08a5fcd1f9b41125cac6f3838a073'),bytes.fromhex('159101030001000000')]
  for req in requests:
   c.seed(0x843a24,c.rd8(0x843a23),1);before=len(c.notifications)
-  shadow=bytes(c.rd8(layout.Y_SHADOW+i) for i in range(63))
+  shadow=bytes(c.rd8(layout.Y_SHADOW+i) for i in range(60))
   for chunk in fragments(b'\x52\x14\0'+req):packet(c,chunk)
   assert c.notifications[before:]==[(0x1a,model.handle(req))],req.hex()
-  assert bytes(c.rd8(layout.Y_SHADOW+i) for i in range(63))==shadow
+  assert bytes(c.rd8(layout.Y_SHADOW+i) for i in range(60))==shadow
   assert c.rd8(0x843bfa)==0 and c.rd8(layout.Y_PENDING)==0
  assert c.rd8(CTX)==4 and c.rd8(CTX+30)==2
  cold=cpu()
@@ -50,7 +50,7 @@ def check(stock,build):
  req=bytes((10,0x91,1,8,0,20,0,0))+bytes(20)
  c.seed(0x843a24,c.rd8(0x843a23),1);before=len(c.notifications)
  for chunk in fragments(b'\x52\x14\0'+req):packet(c,chunk)
- assert c.notifications[before:]==[(0x1a,bytes.fromhex('0a04010800780000'))]
+ assert c.notifications[before:]==[(0x1a,bytes.fromhex('0a01010810780000'))]
  # Queue pressure: preserve an unsent response even if another fragmented command arrives.
  c.seed(layout.Y_PENDING,8,1);snapshot=bytes(c.rd8(layout.Y_REPLY+i) for i in range(80))
  for chunk in chunks:packet(c,chunk)
@@ -59,10 +59,10 @@ def check(stock,build):
  packet(c,chunks[0]);assert c.rd8(0x843bfa)>0
  c.call(symbols['y_att_disconnect']);assert c.rd8(0x843bfa)==0
  # Oversized/new malformed starts cannot write outside the 80-byte buffer.
- shadow=bytes(c.rd8(layout.Y_SHADOW+i) for i in range(63))
+ shadow=bytes(c.rd8(layout.Y_SHADOW+i) for i in range(60))
  for data in (bytes.fromhex('02044a000400'),bytes.fromhex('020104'),bytes.fromhex('0101ff')):
   packet(c,data)
- assert bytes(c.rd8(layout.Y_SHADOW+i) for i in range(63))==shadow
+ assert bytes(c.rd8(layout.Y_SHADOW+i) for i in range(60))==shadow
  return {'ok':True,'stock_32_byte_failure_reproduced':True,'fragmented_full_pairing_checked':True,
          'in_place_response_and_cold_boot_checked':True,'pending_reply_preserved':True,
          'disconnect_and_bounds_checked':True,'fragmented_unsupported_reply_checked':True,

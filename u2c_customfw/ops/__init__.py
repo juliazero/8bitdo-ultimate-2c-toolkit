@@ -2,7 +2,7 @@
 """User-level operations: find devices, back up, patch, restore, report."""
 
 # Recipes kept in the code but never offered or shown by the app: still recognised, but out of every list and summary.
-HIDDEN_TWEAKS = frozenset({"ble_interval", "battery_log", "battery_table", "bt_switch2_force"})
+HIDDEN_TWEAKS = frozenset({"ble_interval", "battery_log", "battery_table"})
 IN_EVERY_INSTALL = ("ble_interval", "battery_table")   # hidden, added to any install with tweaks (the page does the same)
 
 

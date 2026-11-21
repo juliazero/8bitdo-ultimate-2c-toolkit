@@ -75,6 +75,8 @@ u32 y_pair_request(struct y_pairing *ctx, const u8 *req, u32 length, u8 *out) {
 #define Y_REPLY_CCC (*(volatile unsigned short *)0x8417d0)
 #define Y_ALT_REPLY_CCC (*(volatile unsigned short *)0x8412ce)
 #define Y_MTU (*(volatile unsigned short *)0x842f22)
+/* Full Nintendo memory-read response: 16-byte header + 64 data bytes. */
+#define Y_REPLY_CAPACITY 80u
 extern int ble_notify(int connection,int handle,u8 *value,int length);
 void y_reply_poll(void) {
     u32 length=Y_PENDING;
@@ -114,7 +116,7 @@ int y_att_write(u8 *packet) {
     else if(request[0]==0x11 && sub==3) needed=37;
     else if(request[0]==0x15) needed=(sub==1 ? 17 : sub==3 ? 9 : 25);
     else needed=(request[0]==0x10 || (request[0]==0x0c && sub==1))?20:12;
-    if(needed+3>Y_MTU) return 1;
+    if(needed>Y_REPLY_CAPACITY || needed+3>Y_MTU) return 1;
     if(request[0]==0x15 && sub==3) length=durable_commit(request,length);
     else length=y_command_request(Y_CTX,request,length,Y_REPLY);
     if(length) {Y_PENDING=length;y_reply_poll();}
@@ -160,8 +162,8 @@ u8 *y_l2cap_rx(u8 *packet) {
         length=packet[2]|((u32)packet[3]<<8);
         if(n>length+4) return (u8 *)0;
         if(n!=length+4) {
-            if(packet[4]!=4 || packet[5] || length>73) return (u8 *)0;
-            stock_rx_buffer(Y_REPLY,80);
+            if(packet[4]!=4 || packet[5] || length>Y_REPLY_CAPACITY-9u) return (u8 *)0;
+            stock_rx_buffer(Y_REPLY,Y_REPLY_CAPACITY);
         }
     }
     return stock_l2cap_rx(packet);

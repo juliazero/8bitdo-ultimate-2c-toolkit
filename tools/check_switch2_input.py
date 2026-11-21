@@ -86,6 +86,17 @@ def check(frame,build):
     for counter in (254,255,0):
         consume();assert c.call(symbols["y_input_send"],INPUT)==0
         assert c.notifications[-1]==(0xe,input_report(counter=counter,**controls))
+    assert bytes(c.rd8(layout.Y_SHADOW+60+i) for i in range(3)) == bytes(3)
+    # Common notifications also refresh the complete native backing shadow.
+    for i in range(3): c.seed(layout.Y_SHADOW+60+i,255,1)
+    c.seed(layout.Y_INPUT_CCC,0,2)
+    c.seed(layout.CCC[0xa],1,2)
+    consume()
+    assert c.call(symbols["y_input_send"],INPUT)==0
+    assert c.notifications[-1][0]==0xa
+    assert bytes(c.rd8(layout.Y_SHADOW+60+i) for i in range(3)) == bytes(3)
+    c.seed(layout.Y_INPUT_CCC,1,2)
+    c.seed(layout.CCC[0xa],0,2)
     for offset,value,size in ((12,10,1),(13,4,1),(4,4096,2),(0,1<<21,4)):
         seed_input();c.seed(INPUT+offset,value,size)
         assert c.call(symbols["y_input_send"],INPUT)==0xffffffff
@@ -97,10 +108,21 @@ def check(frame,build):
     for address in (0x8433ec,0x8433f6,0x8433e4,0x8433e6):c.seed(address,32767,2)
     c.seed(0x843415,100,1);c.seed(0x800518,0,1)
     for bit,name in source.items():
-        consume();c.seed(0x84342c,1<<bit)
+        consume();c.seed(0x84342c,1<<bit);c.seed(0x84344c,(1<<17) if name=="Home" else 0)
         counter=c.rd8(layout.Y_COUNTER)
         assert c.call(symbols["y_input_from_controller"])==0
         assert c.notifications[-1]==(0xe,input_report(buttons=(name,),counter=counter))
+    # Start + Select is not a Home press, even if stock processing sets bit 17.
+    consume();c.seed(0x84342c,(1<<0)|(1<<3)|(1<<17));c.seed(0x84344c,0)
+    counter=c.rd8(layout.Y_COUNTER)
+    assert c.call(symbols["y_input_from_controller"])==0
+    assert c.notifications[-1]==(0xe,input_report(buttons=("Plus","Minus"),counter=counter))
+    # Raw Home remains active even if stock did not publish it yet.
+    consume();c.seed(0x84342c,0);c.seed(0x84344c,1<<17)
+    counter=c.rd8(layout.Y_COUNTER)
+    assert c.call(symbols["y_input_from_controller"])==0
+    assert c.notifications[-1]==(0xe,input_report(buttons=("Home",),counter=counter))
+    c.seed(0x84344c,0)
     c.seed(0x84342c,0)
     for address,value in ((0x8433ec,0),(0x8433f6,65535),(0x8433e4,65535),(0x8433e6,0)):
         c.seed(address,value,2)

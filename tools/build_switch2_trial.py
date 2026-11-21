@@ -63,11 +63,6 @@ def assemble(stock,build):
     c.label('pairing');c.op(0xb40f);c.literal(0,ACTIVE);c.byte(0,0);c.cmp(0,0);c.op(0xbc0f)
     c.branch('old_pairing',0);tail(symbols['y_profile_pairing'])
     c.label('old_pairing');tail(0xb8bc)
-    # Diagnostic path bypasses physical-button selection at both startup and MAC.
-    c.label('force_start');c.op(0xb40f);c.literal(0,ACTIVE);c.mov(1,1);c.op(0x7001);c.op(0xbc0f)
-    c.op(0xb408);c.literal(3,original(0xa4b8)|1);c.op(0x469c);c.op(0xbc08);c.op(0x4760)
-    c.label('force_identity');c.op(0xb40f);c.literal(0,ACTIVE);c.mov(1,1);c.op(0x7001);c.op(0xbc0f)
-    tail(symbols['y_profile_identity'])
     payload=c.finish();assert ENTRY+len(payload)<=END
     out=bytearray(layout.prepare_frame(interval_candidate(base)))
     if len(out)<END-image.BASE:out.extend(bytes([255])*(END-image.BASE-len(out)))

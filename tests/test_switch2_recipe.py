@@ -20,24 +20,9 @@ class Switch2RecipeTest(unittest.TestCase):
             self.assertEqual(state.names['bt_xbox'],'My Xbox')
             changed=bytearray(data);changed[0x1a050-image.BASE]^=1
             self.assertFalse(recipes.identify(bytes(changed),**constants).known)
-    def test_force_y_is_recognized_only_and_migrates_to_regular_y(self):
-        stock,constants=synthetic()
-        with self.assertRaises(recipes.RecipeError):
-            recipes.build(stock,(*NEEDS,'bt_switch2','bt_switch2_force'),**constants)
-        for previous in (False,True):
-            old=bytearray(recipes.build(stock,(*NEEDS,'bt_switch2'),**constants))
-            if previous:
-                for edit in recipes.RECIPES['bt_switch2'].edits:
-                    if edit.accepts:
-                        old[edit.addr-image.BASE:edit.addr-image.BASE+edit.size]=edit.accepts[-1]
-            for edit in recipes.RECIPES['bt_switch2_force'].edits:
-                value=edit.accepts[-1] if previous and edit.accepts else edit.new
-                old[edit.addr-image.BASE:edit.addr-image.BASE+edit.size]=value
-            state=recipes.identify(bytes(old),**constants)
-            self.assertTrue(state.known)
-            self.assertTrue(state.outdated)
-            self.assertIn('bt_switch2',state.recipes)
-            self.assertNotIn('bt_switch2_force',state.recipes)
+    def test_force_y_is_not_available(self):
+        self.assertNotIn('bt_switch2_force', recipes.RECIPES)
+
     def test_dependencies_and_legacy_app(self):
         stock,constants=synthetic()
         for need in ('bt_modes','dim_leds','settings','cpu_rest'):

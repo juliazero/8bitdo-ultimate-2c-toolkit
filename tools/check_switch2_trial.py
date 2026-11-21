@@ -41,12 +41,8 @@ def check(raw,build,path):
     frame,report=assemble(stock,build)
     symbols=json.loads((build/'pairing-prototype.json').read_text())['symbols']
     factory=bytes.fromhex('123456789abc')
-    def cpu(held=0,d=0,forced=False,early=None,saved=None):
+    def cpu(held=0,d=0,early=None,saved=None):
         code=bytearray(frame)
-        if forced:
-            for address in (0xa138,0xa184,0xa4b8):
-                data=(recipes.BLOBS/f'switch2-force-{address:x}.bin').read_bytes()
-                code[address-image.BASE:address-image.BASE+4]=data
         c=TrialCPU(code);c.physical_keys=held;c.seed(0x800500,0x10,1)
         for i,v in enumerate(frame[0x18084-image.BASE:0x18230-image.BASE]):c.seed(0x842e00+i,v,1)
         c.seed(0x842e3c,0x20000);c.seed(0x842e50,0x20010)
@@ -54,7 +50,7 @@ def check(raw,build,path):
         # Execute compiled bt_start and the stock 0x10e34 radio initializer.
         # Peripheral storage and matrix GPIO columns remain modeled.
         c.startup_target=report['startup_target']
-        c.call(report['dispatch']['force_start' if forced else 'startup'],11,22,33,0x10e35)
+        c.call(report['dispatch']['startup'],11,22,33,0x10e35)
         assert c.startup_seen and c.radio_arguments==(11,22,33,0x10e35)
         c.seed(0x84344c,0)  # radio startup no longer has to preserve the chord
         for i,v in enumerate(factory):c.seed(REQUEST+i,v,1)
@@ -77,12 +73,6 @@ def check(raw,build,path):
         selected=cpu(1<<5,previous_mode,early=0)
         assert selected.rd8(ACTIVE)==1
         assert bytes(selected.rd8(0x843a78+i) for i in range(6))==factory[:5]+bytes((factory[5]^4,))
-    for previous_mode in (0,1):
-        forced=cpu(0,previous_mode,True)
-        assert forced.rd8(ACTIVE)==1
-        assert bytes(forced.rd8(0x843a78+i) for i in range(6))==factory[:5]+bytes((factory[5]^4,))
-        forced.seed(0x843a32,0,1);forced.call(0xa184)
-        assert forced.rd(0x843648,4)==0x1c000 and forced.rd8(0x843a2c)==1
     for usb in (0,1):
         initial=0x80|usb|2
         picked=cpu(1<<5,saved=initial)

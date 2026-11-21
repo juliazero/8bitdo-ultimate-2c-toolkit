@@ -541,21 +541,11 @@ ordering. The fix remains unverified on hardware. Home+Y during operation is
 still not a supported live mode switch; use Y+Home from complete power-off.
 
 
-### Physical diagnostic: forced profile
+### Retired diagnostic: forced profile
 
-The latest startup patch was read back over USB: all four inspected hooks and
-the full 12 KiB extension matched the distributed payload. Windows still showed
-D-input services, with successively changed low address bytes. Stock b89c sets a
-renew-address request in its address record; d6d8 consumes it and increments the
-low address bytes at boot. This explains the observed pattern, but the triggering
-path during the failed Y test is not yet confirmed.
-
-`bt_switch2_force` is a temporary diagnostic subordinate to `bt_switch2`. It
-bypasses button selection at startup, forces Y identity at the MAC hook and calls
-Y setup without the active-flag gate. B/X selection is unavailable in Bluetooth
-while it is installed. The trial test checks both prior saved modes with no held
-buttons and verifies the Y MAC, GATT registration and advertising enable. This is
-an isolation test, not a claim that the hardware failure has been fixed.
+The earlier `bt_switch2_force` diagnostic was removed entirely. Its
+three override blobs, recipe and simulated forced-start tests are no longer
+included. The supported profile is the standard Y chord and `bt_switch2` tweak.
 
 
 Y disconnection no longer tails into original a070, whose renewal branch can call
@@ -609,9 +599,8 @@ ordinary disconnection uses mode (4,2). The original d36c/d2a0 LED driver is
 executed in the test and fast/slow GPIO transition counts are compared. RAM
 reservation is now 239 of the 240 reclaimed bytes.
 
-Force Y is no longer offered in the UI/API or installable through the recipe
-builder. Its earlier-form recipe and prior distributed code are still recognized
-for migration to ordinary bt_switch2. The native UI check asserts its absence.
+Force Y has been removed from the recipe builder and UI/API. Its prior
+experimental code is not recognized as an installable or migratable tweak.
 The user confirmed automatic shutdown while disconnected is normal hardware
 behavior; no change to that behavior is planned.
 
