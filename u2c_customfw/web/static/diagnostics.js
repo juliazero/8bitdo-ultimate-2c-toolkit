@@ -408,7 +408,7 @@ function batteryText(b) {  // macOS defaults to level 0 and an unknown state whe
 
 let cableBattery = null;   // the controller's own reading by cable (GET /api/battery), where macOS reports none
 
-const byCable = () => !!st && st.devices.some((d) => d.mode === "cable" || d.mode === "cable_360");
+const byCable = () => !!st && st.devices.some((d) => d.mode === "cable" || d.mode === "cable_360" || d.mode === "cable_dinput");
 
 async function readCableBattery() {
   if (!testVisible || busy || !byCable()) return;
@@ -425,9 +425,9 @@ function paintBattery() {
   if (!row || !testState) return;
   const own = testState.battery, c = cableBattery;
   const none = !own || own.level < 0 || (own.state === "unknown" && own.level === 0);
-  row.textContent = none && c && byCable()
-    ? (c.unavailable ? "Install the tweaks with this version of the app, with a Home ring level, to read it by cable" : c.full ? "Charged (read from the controller)" : `${c.percent} %${c.charging ? ", charging" : ""} (read from the controller)`)
-    : batteryText(own);
+  row.textContent = c && byCable() && !c.unavailable
+    ? (c.full ? "Charged (read from the controller)" : `${c.percent} %${c.charging ? ", charging" : ""} (read from the controller)`)
+    : none && c && byCable() && c.unavailable ? "Battery command unavailable in installed firmware" : batteryText(own);
 }
 
 function vibrationText(localities) {

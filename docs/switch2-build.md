@@ -1,5 +1,24 @@
 # Building experimental Y firmware from source
 
+## Rumble fix (21 November 2026)
+
+The Pro Controller 2's GATT `0x0012` vibration report is **42 bytes**:
+1 report-id byte, two 16-byte actuator blocks, and 9 reserved bytes.
+The original Y implementation mistakenly required a 33-byte report and thus
+ignored normal full-length vibration writes. A write to `0x0016` instead
+starts with the same 33-byte prefix followed by at least an 8-byte Nintendo
+command (41 bytes minimum). The new firmware handles both lengths and
+preserves the command offset. A zero-amplitude report stops the ordinary
+8BitDo motors with a one-tick zero-strength command so an active hold cannot
+ignore the stop.
+
+These changes are **source-only until the Y code is compiled with TC32**.
+Rebuilding the Windows desktop EXE does not update the controller firmware.
+The existing embedded `switch2-*` blobs are not updated by this change.
+No hardware or console validation has been performed. First validate the
+resulting full image against a verified stock backup, then test vibration
+in Y mode using a host that sends Pro Controller 2 reports to GATT 0x0012.
+
 The checked-in `u2c_customfw/firmware/blobs/switch2-*` files are **precompiled**.
 Changing `firmware-src/switch2-*.c` or `switch2-rumble.h` does not alter what the
 ordinary toolkit installs. Do not assume the HD-rumble source change is present

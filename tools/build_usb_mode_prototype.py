@@ -31,6 +31,8 @@ class Code:
     def load(self, rd, rn, offset=0): self.op(0x6800 | (offset // 4) << 6 | rn << 3 | rd)
     def store(self, rd, rn, offset=0): self.op(0x6000 | (offset // 4) << 6 | rn << 3 | rd)
     def byte(self, rd, rn, offset=0): self.op(0x7800 | offset << 6 | rn << 3 | rd)
+    def store_byte(self, rd, rn, offset=0): self.op(0x7000 | offset << 6 | rn << 3 | rd)
+    def half(self, rd, rn, offset=0): self.op(0x8800 | (offset // 2) << 6 | rn << 3 | rd)
     def literal(self, rd, value):
         self.fixups.append(('literal', self.pc, rd, value)); self.op(0)
     def branch(self, label, cond=None):
@@ -110,7 +112,10 @@ def build(entry=ENTRY, vendor_targets=(0xf56c,0xf594)):
     # 81 05 05 reads and 81 05 00 21 session open are the only non-locking commands.
     for name, stock in zip(('vendor_a','vendor_b'), vendor_targets):
         c.label(name); c.op(0xb510); c.op(0x1c04)  # r4 = packet
-        c.call('activity'); c.op(0x1c20); c.call(stock); c.op(0xbd10)
+        c.call('activity'); c.op(0x1c20); c.call('battery_reply')
+        c.cmp(0, 0); c.branch(name + '_done', 1)
+        c.op(0x1c20); c.call(stock)
+        c.label(name + '_done'); c.op(0xbd10)
     c.label('startup'); c.op(0xb510); c.call(0xf014)
     c.literal(0, 0x800518); c.byte(0, 0); c.mov(1, 1); c.op(0x4208); c.branch('startup_done', 0)  # never re-enumerate USB on battery
     c.literal(0, 0x843915); c.byte(0, 0); c.mov(1, 1); c.op(0x4008)
@@ -143,6 +148,23 @@ def build(entry=ENTRY, vendor_targets=(0xf56c,0xf594)):
     c.op(0x3e01); c.branch('read_done',0)
     c.literal(0,1000); c.call(0xfe0); c.branch('read_send')
     c.label('read_done'); c.op(0xbd70)
+    # Vendor command 81 05 00 5b: battery percentage, raw millivolts, charged latch,
+    # external power. Return 1 only for our command so stock D-input diagnostics,
+    # update mode and the other vendor handlers remain untouched.
+    c.label('battery_reply')
+    c.load(1, 0); c.literal(2, 0x5b000581); c.op(0x4291); c.branch('battery_no', 1)
+    c.op(0xb510); c.op(0xb090)  # push {r4,lr}; sub sp,#64
+    c.op(0xac00)  # r4 = sp
+    c.op(0x1c20); c.mov(1, 0); c.mov(2, 64); c.call(0x103f8)  # stock_clear(response,0,64)
+    c.mov(0, 0x5b); c.store_byte(0, 4, 0)
+    c.literal(1, 0x843415); c.byte(0, 1); c.store_byte(0, 4, 1)
+    c.literal(1, 0x843424); c.half(0, 1); c.store_byte(0, 4, 2)
+    c.op(0x0a00); c.store_byte(0, 4, 3)  # lsrs r0,r0,#8
+    c.literal(1, 0x843423); c.byte(0, 1); c.store_byte(0, 4, 4)
+    c.literal(1, 0x800518); c.byte(0, 1); c.store_byte(0, 4, 5)
+    c.op(0x1c20); c.mov(1, 63); c.mov(2, 2); c.call(0xeb7c)
+    c.mov(0, 1); c.op(0xb010); c.op(0xbd10)  # return true; free frame
+    c.label('battery_no'); c.mov(0, 0); c.op(0x4770) # bx lr
     blob = c.finish()
     assert entry + len(blob) <= (0x9cac if entry < 0xa000 else 0x18ff0)
     # Encode only the existing call replacements; never overwrite stock data blindly.

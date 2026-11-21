@@ -202,8 +202,8 @@ def _make() -> dict[str, Recipe]:
         *(Recipe(key + at, title, (), (
             Edit(0xA3FA, b"\0"),                                 # the ring doesn't light up at startup
             Edit(0xD4F0, _blob(f"ringhook{form}.bin")),          # LED task calls ring_tick for the ring
-            Edit(0xF83C, _blob(f"vhooka{form}.bin"), superseded_by="usb_dinput", accepts=() if form else (_blob("vhooka10.bin"),)) ,            # vendor commands reach ring_vendor
-            Edit(0xF842, _blob(f"vhookb{form}.bin"), superseded_by="usb_dinput", accepts=() if form else (_blob("vhookb10.bin"),)) ,
+            Edit(0xF83C, _blob(f"vhooka{form}.bin"), superseded_by="usb_dinput", accepts=() if form else (_blob("vhooka-prebaseline.bin"),)) ,            # vendor commands reach ring_vendor
+            Edit(0xF842, _blob(f"vhookb{form}.bin"), superseded_by="usb_dinput", accepts=() if form else (_blob("vhookb-prebaseline.bin"),)) ,
             Edit(0xA484, _blob("pollhook5.bin" if not form else f"pollhook{form}.bin"), superseded_by="cpu_rest",
                  accepts=(_blob("pollhook.bin"),) if not form else ()),  # main loop samples the L4 + R4 chord; cpu_rest takes the call over
             Edit(0x7640, bytes(0x90)),                           # dead RAM code, now the ring's and settings' state
@@ -254,7 +254,7 @@ def _make() -> dict[str, Recipe]:
             Edit(0xA484, _blob("loghook.bin")),                  # the main loop's 100 ms call: the log first, then rest_main_poll
         )),
         Recipe("usb_dinput", "USB XInput / D-input switching", (), (
-            Edit(0x9964, _blob("usbmode.bin"), accepts=(_blob("usbmode01.bin"), _blob("usbmode02.bin"), _blob("usbmode03.bin"), _blob("usbmode04.bin"), _blob("usbmode05.bin"), _blob("usbmode-pre12.bin"), _blob("usbmode-prevendor12.bin"))),  # retains Battery log, then mode switching at 0x9a70
+            Edit(0x9964, _blob("usbmode.bin"), accepts=(_blob("usbmode01.bin"), _blob("usbmode02.bin"), _blob("usbmode03.bin"), _blob("usbmode04.bin"), _blob("usbmode05.bin"), _blob("usbmode-pre12.bin"), _blob("usbmode-prevendor12.bin"), _blob("usbmode-prebaseline.bin"))),  # retains Battery log, then mode switching at 0x9a70
             # Use the stock wired D-input PID, avoiding the Bluetooth-only Steam/SDL parser.
             Edit(0x17AFE, bytes.fromhex("1d30"), accepts=(bytes.fromhex("1b30"),)),
             Edit(0xEA08, _u32(600000), accepts=(_u32(200000),)),  # 600 ms USB detach on a mode change
@@ -307,7 +307,7 @@ for _key in ("bt_switch2", "bt_switch2_force"):
     for _edit in RECIPES[_key].edits:
         _prefix = "switch2-force" if _key.endswith("force") else "switch2"
         _previous = tuple(BLOBS / f"{_prefix}-{_edit.addr:x}-{suffix}.bin"
-                          for suffix in ("preindicator", "prememory", "prediscovery", "prehostlist", "prerx", "prevertical"))
+                          for suffix in ("preindicator", "prememory", "prediscovery", "prehostlist", "prerx", "prevertical", "prerumble"))
         _accepted = tuple(path.read_bytes() for path in _previous if path.is_file())
         _edits.append(replace(_edit, accepts=_edit.accepts+_accepted))
     RECIPES[_key] = replace(RECIPES[_key], edits=tuple(_edits))

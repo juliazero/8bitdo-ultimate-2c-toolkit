@@ -5,7 +5,8 @@
 param(
     [switch]$RecreateVenv,
     [switch]$SkipInstall,
-    [string]$PythonPath
+    [string]$PythonPath,
+    [switch]$SkipFirmwareRebuild
 )
 
 $ErrorActionPreference = 'Stop'
@@ -157,6 +158,11 @@ try {
         Invoke-Checked -Executable $venvPython -Arguments @('-m','pip','install','--only-binary=hidapi','-e','.[desktop]','pyinstaller==6.22.3','Pillow==12.3.0')
     }
     Invoke-Checked -Executable $venvPython -Arguments @('-c','import hid, webview, PyInstaller, PIL')
+    # Firmware blobs are versioned in the repository and packaged as application data.
+    # No TC32 compiler or private controller backup is needed for desktop builds.
+    if ($SkipFirmwareRebuild) {
+        Write-Host 'Using committed firmware tweak blobs (no rebuild is needed).'
+    }
     Write-Host 'Building Windows EXE / ZIP...'
     Invoke-Checked -Executable $venvPython -Arguments @('tools/build_desktop.py')
     Write-Host "Finished. Output: $root\dist" -ForegroundColor Green

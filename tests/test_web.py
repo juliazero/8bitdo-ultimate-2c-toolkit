@@ -72,6 +72,23 @@ class WebTest(unittest.TestCase):
             self.assertEqual(json.loads(self.call("GET", "/api/battery")[1]), {})   # two Xbox-ID pads: which one is unknown
         self.assertEqual(self.call("GET", "/api/battery", token=None)[0], 403)
 
+    def test_usb_dinput_battery_uses_the_same_vendor_channel_on_all_hosts(self):
+        info = transport.DeviceInfo(0x2dc8, 0x301b, 1, "USB", "controller", b"hidraw")
+        dev = SimApp(controller_flash())
+        with mock.patch.object(cli, "find", return_value=[devices.Found(info, "cable_dinput")]), \
+             mock.patch.object(cli, "open_channel", return_value=dev) as opening:
+            data = json.loads(self.call("GET", "/api/battery")[1])
+        self.assertEqual((data["source"], data["percent"], data["mv"]), ("cable", 77, 3870))
+        opening.assert_called_once_with(info, 0x81)
+
+    def test_battery_does_not_probe_xinput_only_or_receiver(self):
+        for mode, vendor, product in (("xinput_only", 0x45e, 0x28e), ("dongle_paired", 0x2dc8, 0x301c)):
+            info = transport.DeviceInfo(vendor, product, 1, "USB", "device", None)
+            with self.subTest(mode=mode), mock.patch.object(cli, "find", return_value=[devices.Found(info, mode)]), \
+                 mock.patch.object(cli, "open_channel") as opening:
+                self.assertEqual(json.loads(self.call("GET", "/api/battery")[1]), {})
+                opening.assert_not_called()
+
     def test_a_short_read_in_this_core_is_waited_for(self):
         runner = jobs.Runner(self.store)
         self.assertTrue(runner.claim())

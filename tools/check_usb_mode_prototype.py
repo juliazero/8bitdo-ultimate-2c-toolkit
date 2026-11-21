@@ -48,10 +48,11 @@ def check(stock, keys=None):
         def __init__(self, battery_mv=3700, battery_percent=50):
             self.writes=[]
             super().__init__(bytes(flash))
-            self.analog=0x80; self.edges=[]; self.delays=[]; self.vendor_calls=[]; self.slider_calls=0; self.saves=[]; self.reply_attempts=[]; self.reply_busy=0
+            self.analog=0x80; self.edges=[]; self.delays=[]; self.vendor_calls=[]; self.slider_calls=0; self.saves=[]; self.reply_attempts=[]; self.reply_busy=0; self.battery_replies=[]
             self.seed(proto.USB,2,1);self.seed(0x800518,1,1)
             self.seed(0x843424,battery_mv)
             self.seed(0x843415,battery_percent,1)
+            self.seed(0x843423,1,1)
             self.call(0xd794)
             assert self.rd8(0x843470)==(battery_mv <= 1999)  # actual variant detection
             self.seed(proto.MODE,0,1);self.seed(0x843915,0,1)
@@ -69,6 +70,14 @@ def check(stock, keys=None):
             self.writes.append((a,v&255));self.ram[a]=v&255
         def trap(self,pc,r):
             self.last_pc=pc
+            if pc == 0x103f8:
+                assert r[1] == 0 and r[2] == 64
+                for i in range(64): self.wr8(r[0]+i,0)
+                return True
+            if pc == 0xeb7c:
+                assert r[1] == 63 and r[2] == 2
+                self.battery_replies.append(self.rd(r[0],6).to_bytes(6,"little"))
+                return True
             if pc==0xeb04:
                 self.reply_attempts.append(tuple(r[:2]));r[0]=int(self.reply_busy==0);self.reply_busy=max(0,self.reply_busy-1);return True
             if pc==0xd84:
@@ -171,6 +180,15 @@ def check(stock, keys=None):
     c.poll(10100,0);c.poll(10200,H|X);c.poll(13200,H|X)
     assert c.rd8(proto.MODE)==0
     print('ok: both vendor routes retained, backup traffic resets hold, 2-second quiet interval')
+    if keys is not None:
+        for route, stock in (("vendor_a",0xf56c),("vendor_b",0xf594)):
+            c=CPU(battery_mv=3821,battery_percent=63)
+            c.packet(0,bytes.fromhex("81 05 00 5b"),route)
+            assert c.battery_replies == [bytes((0x5b,63,0xed,0x0e,1,1))],(route,c.battery_replies)
+            assert c.vendor_calls == []
+            c.packet(100,bytes.fromhex("81 05 00 51 00"),route)
+            assert c.vendor_calls == [stock],(route,c.vendor_calls)
+        print('ok: cable battery reply on both vendor routes; update command remains on stock handler')
     for packet in ('81 05 c1 00 00','81 05 02 00 00','81 05 03 00 00','81 05 04 00 00',
                    '81 05 0b 00 00','81 05 c4 00 00','81 05 00 51 00','81 05 00 55 00','81 00 66 aa 64'):
         c=CPU();c.packet(0,bytes.fromhex(packet));c.poll(10000,H|B);c.poll(20000,H|B)

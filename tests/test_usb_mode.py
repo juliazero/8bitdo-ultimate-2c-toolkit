@@ -68,6 +68,17 @@ class USBModeImageTest(unittest.TestCase):
                 old[0xa414-image.BASE:0xa418-image.BASE]=start.accepts[0]
                 self.assertEqual(set(recipes.identify(bytes(old)).recipes),set(keys),version)
 
+    def test_stock_usb_patches_remain_applicable(self):
+        # Compatibility is anchored to the official stock firmware, not to
+        # intermediate local test builds with arbitrary hook bytes.
+        from u2c_customfw import cli
+        with tempfile.TemporaryDirectory() as tmp, installed(Path(tmp)):
+            stock=cli.fetch.fetch_stock()
+            keys=['ring_normal','settings','cpu_rest','battery_log','usb_dinput']
+            patched=recipes.build(stock,keys)
+            self.assertEqual(set(recipes.identify(patched).recipes),set(keys))
+            self.assertEqual(recipes.build(stock,keys),patched)
+
     def test_previous_ring_and_watchdog_payloads_remain_recognized(self):
         from u2c_customfw import cli
         with tempfile.TemporaryDirectory() as tmp, installed(Path(tmp)):

@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, urlparse
 from .. import __version__, disclaimer, settings, state, update
 from .. import cli
 from ..firmware import recipes
-from ..ops import backup as bkp, battlog, dongle, probe, report as report_mod, shown, update_available
+from ..ops import backup as bkp, battery as battery_ops, battlog, dongle, probe, report as report_mod, shown, update_available
 from ..ops.devices import XINPUT_NOTE, Found
 from ..ops import settings as settings_ops
 from ..ops.plan import OpError
@@ -155,7 +155,7 @@ def make_server(store: Path, port: int = 0):
             if not self.host_ok():
                 return self.send(403, "forbidden", "text/plain")
             path = self.path.split("?")[0]
-            route = {"/api/simulation": self.api_simulation, "/api/windows-stock-stream": self.api_windows_stock_stream, "/api/windows-stock-gamepad": self.api_windows_stock_gamepad, "/api/windows-battery": self.api_windows_battery, "/api/state": self.api_state, "/api/events": self.api_events, "/api/firmware": self.api_firmware,
+            route = {"/api/simulation": self.api_simulation, "/api/windows-stock-stream": self.api_windows_stock_stream, "/api/windows-stock-gamepad": self.api_windows_stock_gamepad, "/api/windows-battery": self.api_windows_battery, "/api/battery": self.api_battery, "/api/state": self.api_state, "/api/events": self.api_events, "/api/firmware": self.api_firmware,
                      "/api/settings": self.api_settings_read, "/api/linux-gamepad": self.api_linux_gamepad, "/api/busy": self.api_busy, "/api/update": self.api_update, "/api/job": self.api_job, "/api/windows-rumble": self.api_windows_rumble}.get(path)
             if route:
                 return route()
@@ -249,6 +249,51 @@ def make_server(store: Path, port: int = 0):
             self.send(200, json.dumps({"version": __version__, "simulation": bool(os.environ.get("U2C_SIM")), "simulation_controls": SIMULATION_WORLD is not None, "accepted": state.accepted(store), "devices": found,
                                        "backups": backups, "storage_dir": str(Path(store).resolve()),
                                        "disclaimer": disclaimer.text()}))
+
+        def api_battery(self):
+            """Read the controller's battery from its own USB firmware command.
+
+            The vendor command is optional: older controller firmware does not answer it.
+            Never send it to a paired dongle or an XInput-only interface.
+            """
+            if not self.auth():
+                return
+            found = cli.find()
+            cable = [f for f in found if f.mode in ("cable", "cable_360", "cable_dinput")]
+            if len(cable) == 1:
+                if not runner.claim():
+                    return self.send(200, json.dumps({"busy": True}))
+                try:
+                    ch = cli.open_channel(cable[0].info, 0x81)
+                    try:
+                        # The normal app read confirms that the channel belongs to
+                        # the controller (not a 2.4 GHz receiver mimicking its ID).
+                        probe.check_not_dongle(ch)
+                        reading = app.battery(ch)
+                    finally:
+                        ch.close()
+                    return self.send(200, json.dumps({"source": "cable", **(reading if reading is not None else {"unavailable": True})}))
+                except probe.PairedDongle:
+                    return self.send(200, "{}")
+                except (OpError, PermissionDenied, OSError, ProtocolError):
+                    return self.send(200, json.dumps({"source": "cable", "unavailable": True}))
+                finally:
+                    runner.release()
+            if cable:
+                return self.send(200, "{}")
+            bt = [f for f in found if f.mode in ("bluetooth", "bluetooth_xbox")]
+            if len(bt) == 1:
+                pad = bt[0]
+                if sys.platform == "win32":
+                    data = windows_battery()
+                    percent = round(data["level"] * 100) if data.get("state") == "reported" else None
+                else:
+                    percent = battery_ops.bluetooth_percent(pad.info.name)
+                result = {"source": "bluetooth", "name": pad.info.name}
+                if percent is not None:
+                    result["percent"] = percent
+                return self.send(200, json.dumps(result))
+            return self.send(200, "{}")
 
         def api_battery_log(self):
             """Export the controller's stored battery history over USB, including bootloader mode."""

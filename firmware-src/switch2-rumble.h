@@ -23,18 +23,49 @@ static u32 y_rumble_strength(const u8 *block) {
         if(combined>1023) combined=1023;
         if(combined>maximum) maximum=combined;
     }
-    return (maximum*255u+511u)/1023u;
+    /* Exact divide by 1023 for this bounded numerator without __udivsi3. */
+    u32 scaled=maximum*255u+511u;
+    return (scaled+(scaled>>10))>>10;
 }
 extern void motor_set(u32 strong,u32 weak,u32 hold);
+/* GATT 0x0012 carries 42 bytes (33 bytes of actuator data plus 9
+ * reserved bytes). GATT 0x0016 starts with the same 33-byte actuator
+ * prefix, then the Nintendo command header and optional payload.
+ * The decoder only needs the common prefix, not the reserved tail.
+ */
+#define Y_RUMBLE_PREFIX_LENGTH 33u
+#define Y_RUMBLE_OUTPUT_LENGTH 42u
+#define Y_RUMBLE_COMBINED_HEADER_LENGTH 41u
+
 static void y_rumble_write(const u8 *value,u32 length) {
     u32 left,right;
-    if(length!=33 || value[0]!=0 ||
+    if(length<Y_RUMBLE_PREFIX_LENGTH || value[0]!=0 ||
        (value[1]&0xc0)!=0x40 || (value[17]&0xc0)!=0x40) return;
     left=y_rumble_strength(value+1);
     right=y_rumble_strength(value+17);
     /* 2C native strong/weak motors approximate the independent Pro 2 grips.
      * Bound each pulse: a lost BLE stop report must not leave motors running.
      */
-    motor_set(left,right,(left||right)?2:0);
+    /* The stock motor routine ignores a zero-hold write while a previous
+     * hold is active. Use a one-tick zero-strength write to stop both
+     * motors, rather than silently preserving the previous pulse.
+     */
+    motor_set(left,right,(left||right)?2:1);
+}
+/* Return the command-header offset for a combined report, -1 if the
+ * entire report is vibration-only or invalid. An invalid vibration
+ * packet must never be parsed as a Nintendo command.
+ */
+static int y_rumble_att_route(u32 handle,const u8 *value,u32 length) {
+    if(handle==0x12) {
+        if(length==Y_RUMBLE_OUTPUT_LENGTH) y_rumble_write(value,length);
+        return -1;
+    }
+    if(handle==0x16) {
+        if(length<Y_RUMBLE_COMBINED_HEADER_LENGTH) return -1;
+        y_rumble_write(value,Y_RUMBLE_PREFIX_LENGTH);
+        return (int)Y_RUMBLE_PREFIX_LENGTH;
+    }
+    return 0;
 }
 #endif

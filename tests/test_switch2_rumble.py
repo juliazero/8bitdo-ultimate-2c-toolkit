@@ -31,6 +31,7 @@ class Switch2RumbleTest(unittest.TestCase):
 static unsigned strong,weak,hold,calls;
 void motor_set(u32 s,u32 w,u32 h) {strong=s;weak=w;hold=h;calls++;}
 void invoke(const u8 *p,u32 len) {y_rumble_write(p,len);}
+int route(u32 handle,const u8 *p,u32 len) {return y_rumble_att_route(handle,p,len);}
 unsigned get_value(unsigned i) {return i==0?strong:i==1?weak:i==2?hold:calls;}
 void clear(void) {strong=weak=hold=calls=0;}
 ''')
@@ -39,6 +40,8 @@ void clear(void) {strong=weak=hold=calls=0;}
                         '-I', str(ROOT/'firmware-src'), str(source), '-o', str(shared)], check=True)
         cls.lib = ctypes.CDLL(str(shared))
         cls.lib.invoke.argtypes = [ctypes.POINTER(ctypes.c_ubyte), ctypes.c_uint]
+        cls.lib.route.argtypes = [ctypes.c_uint, ctypes.POINTER(ctypes.c_ubyte), ctypes.c_uint]
+        cls.lib.route.restype = ctypes.c_int
         cls.lib.get_value.argtypes = [ctypes.c_uint]
         cls.lib.get_value.restype = ctypes.c_uint
 
@@ -57,7 +60,39 @@ void clear(void) {strong=weak=hold=calls=0;}
             expected = (level * 255 + 511)//1023
             self.assertEqual(self.lib.get_value(0), expected)
             self.assertEqual(self.lib.get_value(1), expected)
-            self.assertEqual(self.lib.get_value(2), 2 if level else 0)
+            self.assertEqual(self.lib.get_value(2), 2 if level else 1)
+
+    def routed(self, handle, raw):
+        values = (ctypes.c_ubyte * len(raw)).from_buffer_copy(raw)
+        return self.lib.route(handle, values, len(raw))
+
+    def test_gatt_output_length_includes_reserved_bytes(self):
+        self.lib.clear()
+        payload = packet([(350, 0)], [(0, 500)])
+        self.assertEqual(len(payload), 33)
+        self.assertEqual(self.routed(0x12, payload), -1)
+        self.assertEqual(self.lib.get_value(3), 0)
+        self.assertEqual(self.routed(0x12, payload + bytes(9)), -1)
+        self.assertEqual(self.lib.get_value(3), 1)
+        self.assertEqual(self.lib.get_value(0), (350 * 255 + 511)//1023)
+        self.assertEqual(self.lib.get_value(1), (500 * 255 + 511)//1023)
+
+    def test_combined_output_command_offset(self):
+        self.lib.clear()
+        payload = packet([(800, 0)], [(100, 0)])
+        command = bytes.fromhex('0a 91 01 02 00 04 00 00 03 00 00 00')
+        self.assertEqual(self.routed(0x16, payload + command), 33)
+        self.assertEqual(self.lib.get_value(3), 1)
+        self.assertEqual(self.routed(0x16, payload + command[:7]), -1)
+        self.assertEqual(self.lib.get_value(3), 1)
+        self.assertEqual(self.routed(0x14, command), 0)
+        self.assertEqual(self.lib.get_value(3), 1)
+
+    def test_stop_report_overrides_active_hold(self):
+        self.lib.clear()
+        self.routed(0x12, packet([(800, 0)], [(700, 0)])+bytes(9))
+        self.routed(0x12, packet([(0, 0)], [(0, 0)])+bytes(9))
+        self.assertEqual(tuple(self.lib.get_value(i) for i in range(4)), (0, 0, 1, 2))
 
     def test_max_over_three_samples_and_saturation(self):
         self.lib.clear()

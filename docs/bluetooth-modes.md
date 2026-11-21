@@ -128,8 +128,10 @@ this change**. To enable it, rebuild the experimental payload with a TC32
 compiler and a verified stock backup (see [firmware build](switch2-build.md)).
 Normal D/X haptics remain independent. The translator approximates per-grip
 amplitude, discards frequencies and maps short samples to the two ordinary
-8BitDo motors; it cannot reproduce Nintendo's HD Rumble fidelity. Stop packets
-and disconnects explicitly stop both motors. Verify motor safety on hardware.
+8BitDo motors; it cannot reproduce Nintendo's HD Rumble fidelity. The corrected source handles the full 42-byte output report on GATT 0x0012,
+41-byte-or-longer combined output on 0x0016, and active-hold stop packets.
+Stop packets and disconnects explicitly stop both motors. Verify motor safety
+on hardware after compiling and installing the revised firmware.
 
 ### Y profile: LT/RT behave as digital ZL/ZR
 

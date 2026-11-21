@@ -48,3 +48,27 @@ report sizes/IDs and the vendor output usage before writing. Each test lasts
 450 ms and always sends stop, including interruption. This is a toolkit motor
 test, not automatic D-input force feedback support in games. Updating from the
 old one-byte vendor output requires re-pairing the D-input profile once.
+
+### Battery reading over USB (Windows and Linux)
+
+Diagnostics asks the controller itself through the normal USB vendor channel
+(`81 05 00 5b`); this path is OS-independent. The browser calls the local
+`GET /api/battery` endpoint. It first verifies the controller's identity with
+an ordinary flash read, and never forwards this query to a receiver posing as
+a controller. The response can include the firmware-reported percentage,
+voltage, charge-full latch, and external-power flag.
+
+**Firmware limitation:** this command is not part of stock firmware 1.09.
+Some builds contain it, but the currently retained known-good D-input vendor
+hooks do not route to the new battery handler. In that case Diagnostics must
+show *unavailable*, not invent a battery percentage. Do not restore the newer
+vendor hooks merely for battery display: they caused D-input rumble and
+bootloader-entry regressions on hardware. A separate firmware fix is needed,
+with on-device regression testing, before USB reporting can be guaranteed.
+
+When the controller is plugged in as an Xbox 360 and the OS hides the vendor
+interface, this app cannot read the firmware's battery command either. Use
+USB D-input or update mode for firmware operations; do not confuse the dongle
+with a direct USB controller. No validated battery query is currently known
+for the Ultimate 2C 2.4 GHz receiver. The application does not send battery
+queries to that receiver or infer percentage from unrelated bytes.

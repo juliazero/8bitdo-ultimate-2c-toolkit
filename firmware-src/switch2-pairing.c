@@ -96,6 +96,7 @@ static __attribute__((noinline)) u32 durable_commit(const u8 *request,u32 length
 int y_att_write(u8 *packet) {
     const u8 *request;
     u32 length,needed,sub,handle;
+    int offset;
     if(packet[6]!=0x52 || packet[8]) return 1;
     handle=packet[7];
     if(handle!=0x12 && handle!=0x14 && handle!=0x16) return 1;
@@ -103,17 +104,9 @@ int y_att_write(u8 *packet) {
     if(length<3 || length>Y_MTU) return 1;
     length-=3;
     request=packet+9;
-    if(handle==0x12) {
-        if(length==33) y_rumble_write(request,33);
-        return 1;
-    }
-    if(handle==0x16) {
-        /* Pro 2 combined output: 33 vibration bytes followed by a command. */
-        if(length<33) return 1;
-        y_rumble_write(request,33);
-        request+=33;length-=33;
-        if(!length) return 1;
-    }
+    offset=y_rumble_att_route(handle,request,length);
+    if(offset<0) return 1; /* vibration-only or invalid output */
+    request+=(u32)offset;length-=(u32)offset;
     if(length<8 || (Y_REPLY_CCC!=1 && Y_ALT_REPLY_CCC!=1) || Y_PENDING) return 1;
     sub=request[3];
     if(request[0]==2) {if(length!=16) return 1;needed=16+request[8];}
