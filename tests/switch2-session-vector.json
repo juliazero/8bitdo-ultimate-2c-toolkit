@@ -1,0 +1,28 @@
+{
+  "ltk_wire": "69f50750ae5874c504836f43820fdc5b",
+  "skdm": "0001020304050607",
+  "skds": "08090a0b0c0d0e0f",
+  "ivm": "a0a1a2a3",
+  "ivs": "a4a5a6a7",
+  "session_key_register_order": "e9bcba97e0c14ad3e7aad4e1c16ac758",
+  "vectors": [
+    {
+      "counter": 0,
+      "aad": 2,
+      "plaintext": "420004001b0e004724020008000880000880300000000000000000",
+      "ciphertext": "354a4f1ad492666da865837f178eaf1a257817dc990d059365a0ef5313d923"
+    },
+    {
+      "counter": 1,
+      "aad": 1,
+      "plaintext": "000000000000000000000000000000000000000000000000000000",
+      "ciphertext": "7410a76381fccc6e76705f124f5e9ffc9d27e10cde5584371b5fd02d0cff13"
+    },
+    {
+      "counter": 2,
+      "aad": 1,
+      "plaintext": "00000000000000000000000000000000",
+      "ciphertext": "9b1765b3d6be7c919e765466d286ca6f46a85522"
+    }
+  ]
+}

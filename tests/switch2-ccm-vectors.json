@@ -1,0 +1,86 @@
+[
+  {
+    "direction": 0,
+    "counter": 0,
+    "aad": 2,
+    "plaintext": "420004001b0e004724020008000880000880300000000000000000",
+    "ciphertext": "986e1a29a32416369d5b8bc92ae06c67da599d869566ae98b333f480e7527a"
+  },
+  {
+    "direction": 0,
+    "counter": 1,
+    "aad": 1,
+    "plaintext": "000000000000000000000000000000000000000000000000000000",
+    "ciphertext": "c3c6608f04cb1bb324138b642317d59adae45f8e5c17787a198b5a19550bcc"
+  },
+  {
+    "direction": 0,
+    "counter": 2,
+    "aad": 1,
+    "plaintext": "00000000000000000000000000000000",
+    "ciphertext": "ef0dd29b97626caa613331bbb59db8207ab1046a"
+  },
+  {
+    "direction": 0,
+    "counter": 3,
+    "aad": 2,
+    "plaintext": "420004001b0e004724020008000880000880300000000000000000",
+    "ciphertext": "9311215f368c04ed2c9c26ce868d090dc954347449ff294c2b8d35c92a82f6"
+  },
+  {
+    "direction": 0,
+    "counter": 4,
+    "aad": 1,
+    "plaintext": "000000000000000000000000000000000000000000000000000000",
+    "ciphertext": "cf3608bd16c45ac7fc696fa9ca302919de6d8468e593723b1a7f7aeabd6689"
+  },
+  {
+    "direction": 0,
+    "counter": 5,
+    "aad": 1,
+    "plaintext": "00000000000000000000000000000000",
+    "ciphertext": "18adfa78f2d174bf4fe0759e10004a8249ab9da2"
+  },
+  {
+    "direction": 1,
+    "counter": 0,
+    "aad": 2,
+    "plaintext": "420004001b0e004724020008000880000880300000000000000000",
+    "ciphertext": "614fd8d3a983d287e7fd397da48e9dcf73ab0362739af4065cb7a85114f3a4"
+  },
+  {
+    "direction": 1,
+    "counter": 1,
+    "aad": 1,
+    "plaintext": "000000000000000000000000000000000000000000000000000000",
+    "ciphertext": "b276b2e2ccb01a9bdadab8378da0c3e28421f0b2b686f3ea1d36e62d56b245"
+  },
+  {
+    "direction": 1,
+    "counter": 2,
+    "aad": 1,
+    "plaintext": "00000000000000000000000000000000",
+    "ciphertext": "51502c299da2b3068a996138fded6aae74c6c88e"
+  },
+  {
+    "direction": 1,
+    "counter": 3,
+    "aad": 2,
+    "plaintext": "420004001b0e004724020008000880000880300000000000000000",
+    "ciphertext": "826e000973ddc8a6ab438b3c2dae04eb8642120a1b35581ae0289136883892"
+  },
+  {
+    "direction": 1,
+    "counter": 4,
+    "aad": 1,
+    "plaintext": "000000000000000000000000000000000000000000000000000000",
+    "ciphertext": "61b933d0aebc5fc9084943be2e2a06cb0afe82ab724161348b80f897538964"
+  },
+  {
+    "direction": 1,
+    "counter": 5,
+    "aad": 1,
+    "plaintext": "00000000000000000000000000000000",
+    "ciphertext": "cd25831ee6c42c4bd9045a7853d34334d0ae2646"
+  }
+]

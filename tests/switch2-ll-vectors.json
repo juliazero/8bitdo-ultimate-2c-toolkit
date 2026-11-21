@@ -1,0 +1,35 @@
+{
+  "control": [
+    {
+      "direction": 0,
+      "counter": 0,
+      "aad": 3,
+      "plaintext": "06",
+      "ciphertext": "713b78156f"
+    },
+    {
+      "direction": 1,
+      "counter": 0,
+      "aad": 3,
+      "plaintext": "06",
+      "ciphertext": "d4fb0ad272"
+    }
+  ],
+  "input": [
+    {
+      "counter": 1,
+      "aad": 2,
+      "ciphertext": "3610a3639af2cc2952725f1a4f561ffc95a7d10cde5584371b5fd01b49c84f"
+    },
+    {
+      "counter": 2,
+      "aad": 1,
+      "ciphertext": "9b1765b3d6be7c919e765466d286ca6fd837215e9911ccdb7ee1c45fad53fa"
+    },
+    {
+      "counter": 3,
+      "aad": 1,
+      "ciphertext": "c4bbf03db2f5e0565509da8d13c1106d3fd2099e"
+    }
+  ]
+}
