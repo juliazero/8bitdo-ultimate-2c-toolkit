@@ -12,7 +12,7 @@ HARNESS = r"""
 typedef unsigned char u8; typedef unsigned short u16; typedef unsigned int u32;
 u32 BTN, RAW_BTN; u16 LX, LY, RX, RY, LT, RT;
 u8 REGS[0x1000] __attribute__((aligned(4))); volatile u16 RING_LEVEL;
-u8 PCT, FULL, SAVED, ALERTS_FLAG; u16 MV; u32 TIMER, RING_CODE = 1;
+u8 PCT, FULL, SAVED, ALERTS_FLAG; u32 TIMER, RING_CODE = 1;
 u8 REST_FLAG, MOTOR_L, MOTOR_R, MOTOR_HOLD;
 static int notifies, afters, stock_passes;
 void rest_poll(void);
@@ -24,14 +24,10 @@ void ring_command(u32 level, u32 save);
 void main_poll(void);
 void vendor_a(u8 *p);
 void vendor_b(u8 *p);
-void battery_vendor_a(u8 *p);
-void battery_vendor_b(u8 *p);
 void ring_reset(void);
 unsigned ring_level_now(void);
 void save_settings(void) { printf("SAVE %02x\n", SAVED); }
 void flash_unlock(void) {}
-void stock_clear(u8 *p, u32 v, u32 n) { for (u32 k = 0; k < n; k++) p[k] = v; }
-void stock_send(u8 *d, u32 n, u32 i) { printf("SEND"); for (int k = 0; k < 6; k++) printf(" %02x", d[k]); printf(" %u %u\n", n, i); }
 void flash_erase(u32 a) { printf("ERASE %x\n", a); }
 void flash_write(u32 a, u32 n, u8 *d) { printf("WRITE %x\n", a); }
 void flash_read(u32 a, u32 n, u8 *d) { for (u32 i = 0; i < n; i++) d[i] = 0xff; }
@@ -50,6 +46,9 @@ void stock_da58(u32 a) {}
 void stock_reboot(void) {}
 void stock_sweep(void) {}
 void stock_chords(void) { stock_passes++; }
+u16 MV = 3700;
+void stock_clear(u8 *p, u32 value, u32 size) { for (u32 i=0;i<size;i++) p[i]=(u8)value; }
+void stock_send(u8 *p, u32 size, u32 interface) { (void)p; (void)size; (void)interface; }
 void stock_vendor_a(u8 *p) { printf("VA\n"); }
 void stock_vendor_b(u8 *p) { printf("VB\n"); }
 void led_driver(u32 mode, u32 pin, u8 *counter) { printf("D %x %x %lx\n", mode, pin, (unsigned long)counter); }
@@ -88,7 +87,6 @@ int main(void) {
         if (line[0] == 'K') { sscanf(line + 2, "%x", &RAW_BTN); continue; } /* the physical word alone */
         if (line[0] == 'Y') { sscanf(line + 2, "%x", &BTN); continue; }     /* the mapped word alone */
         if (line[0] == 'N') { RING_CODE = 0; continue; } /* no ring code installed */
-        if (line[0] == 'M') { unsigned v; sscanf(line + 2, "%u", &v); MV = v; continue; } /* the battery's mV */
         if (line[0] == 'P') { /* P <n>: n main-loop passes, 100 ms apart */
             unsigned n; sscanf(line + 2, "%u", &n);
             while (n--) { TIMER += 1600000; main_poll(); }
@@ -109,7 +107,7 @@ int main(void) {
         if (line[0] == 'A' || line[0] == 'Z') { /* vendor command hooks, by report bytes */
             u8 pk[8] = {0}; int n = 0; unsigned x;
             for (char *q = line + 2; n < 8 && sscanf(q, "%2x", &x) == 1; q += 2) pk[n++] = x;
-            if (line[0] == 'A') battery_vendor_a(pk); else battery_vendor_b(pk);   /* what the hooks call */
+            if (line[0] == 'A') vendor_a(pk); else vendor_b(pk);
             continue;
         }
         if (line[0] == 'W' || line[0] == 'Q') { /* W <flag> <n>: n rest_poll calls on zeroed registers; Q <n>: n more. Then the timer word and status */
@@ -310,7 +308,7 @@ class Sim:
     def poll(self, n=1): return self.add(f"P {n}")
     def tick(self, n=1, mode=1): return self.add(f"T {mode} {n}")
     def bat(self, pct, ext=0, full=0): return self.add(f"X {pct} {ext} {full}")
-    def press(self, b): return self.btn(b).poll(2).btn(0).poll(2)
+    def press(self, b): return self.btn(b).poll(51 if b == (L4 | R4) else 2).btn(0).poll(2)
     def out(self): return _run_harness("".join(x + "\n" for x in self.lines)).splitlines()
 
     def ticks(self):
@@ -356,17 +354,17 @@ def test_installing_another_level_wins_over_a_saved_one():
 
 
 def test_chord_moves_one_level_per_press():
-    s = Sim(level=250).tick().btn(L4 | R4).poll(50).tick(3).btn(0).poll(2).tick()
+    s = Sim(level=250).tick().btn(L4 | R4).poll(100).tick(3).btn(0).poll(2).tick()
     assert duty(s.ticks()[-1]) == 50
 
 
 def test_chord_works_with_either_button_first():
-    assert duty(Sim(level=250).tick().btn(L4).poll(2).btn(L4 | R4).poll(2).btn(0).poll(2).tick().ticks()[-1]) == 50
-    assert duty(Sim(level=250).tick().btn(R4).poll(2).btn(L4 | R4).poll(2).btn(0).poll(2).tick().ticks()[-1]) == 50
+    assert duty(Sim(level=250).tick().btn(L4).poll(2).btn(L4 | R4).poll(51).btn(0).poll(2).tick().ticks()[-1]) == 50
+    assert duty(Sim(level=250).tick().btn(R4).poll(2).btn(L4 | R4).poll(51).btn(0).poll(2).tick().ticks()[-1]) == 50
 
 
 def test_chord_reads_the_physical_word():
-    s = Sim(level=50).tick().add("Y 0").add(f"K {1 << 26 | 1 << 25:x}").tick()
+    s = Sim(level=50).tick().add("Y 0").add(f"K {1 << 26 | 1 << 25:x}").poll(51).tick()
     assert duty(s.ticks()[-1]) != 50  # stock clears a mapped paddle's bit in the other word
     s = Sim(level=50).tick().add(f"Y {1 << 26 | 1 << 25:x}").add("K 0").tick()
     assert duty(s.ticks()[-1]) == 50  # and a mapped button pressing them isn't a chord
@@ -377,8 +375,15 @@ def test_chord_needs_both_buttons():
         assert duty(Sim(level=250).tick().press(b).tick().ticks()[-1]) == 250
 
 
-def test_a_tap_between_ticks_counts():
-    assert duty(Sim(level=250).tick().btn(L4 | R4).poll(1).btn(0).poll(1).tick().ticks()[-1]) == 50
+def test_a_tap_between_ticks_does_not_change_ring():
+    assert duty(Sim(level=250).tick().btn(L4 | R4).poll(1).btn(0).poll(1).tick().ticks()[-1]) == 250
+
+
+def test_chord_requires_five_seconds_and_restarts_after_release():
+    assert Sim(level=250).tick().btn(L4 | R4).poll(50).add("G").out()[-1].startswith("G 1 ")
+    assert Sim(level=250).tick().btn(L4 | R4).poll(51).add("G").out()[-1].startswith("G 2 ")
+    s = Sim(level=250).tick().btn(L4 | R4).poll(40).btn(0).poll(1).btn(L4 | R4).poll(50).add("G")
+    assert s.out()[-1].startswith("G 1 ")
 
 
 def test_chord_wraps_around():
@@ -391,13 +396,12 @@ def test_chord_wraps_around():
     assert seen == ["normal", 250, 50, 10, 1, "off", "normal"], seen
 
 
-def test_several_presses_make_one_save():
+def test_completed_holds_save_once_each():
     s = Sim(level=NORMAL).tick()
     for _ in range(3):
-        s = s.press(L4 | R4).tick(5)
-    s.tick(20)
+        s = s.press(L4 | R4).tick(20)
     saves = [x for x in s.out() if x.startswith("SAVE")]
-    assert saves == ["SAVE 03"], saves  # installed Normal (index 0), now 1 % (index 3)
+    assert saves == ["SAVE 01", "SAVE 02", "SAVE 03"], saves
 
 
 def test_a_save_comes_three_seconds_after_the_last_press():
@@ -575,13 +579,6 @@ def test_battery_pct_matches_the_time_left_in_the_measured_discharge():
     left = [100 * (len(med) - i) / len(med) for i in range(len(med))]
     err = [abs(p - l) for p, l in zip(battery_pcts(med), left)]
     assert max(err) < 4 and sum(err) / len(err) < 1.5, (max(err), sum(err) / len(err))
-
-
-def test_the_battery_command_answers_with_the_level():
-    out = Sim(pct=77, ext=1).add("M 3870", "A 8105005b").out()
-    assert "SEND 5b 4d 1e 0f 00 01 63 2" in out, out   # 77 %, 3870 mV, not charged, external power; 63 bytes on interface 2
-    assert "SEND 5b 64 30 10 01 01 63 2" in Sim(pct=100, ext=1, full=1).add("M 4144", "Z 8105005b").out()
-    assert not [x for x in Sim().add("M 3870", "A 8105005c").out() if x.startswith("SEND")]
 
 
 def test_a_low_reading_right_after_starting_doesnt_alert():

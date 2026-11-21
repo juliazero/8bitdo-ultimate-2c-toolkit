@@ -10,9 +10,8 @@ from u2c_customfw import transport
 
 
 class TransportTest(unittest.TestCase):
-    @unittest.skipIf(sys.platform.startswith(("darwin", "linux")), "supported platform")
     def test_unsupported_platforms_point_to_porting_doc(self):
-        with self.assertRaises(NotImplementedError) as e:
+        with mock.patch.object(sys, "platform", "unsupported"), self.assertRaises(NotImplementedError) as e:
             transport.list_devices()
         self.assertIn("docs/porting.md", str(e.exception))
 
@@ -21,6 +20,7 @@ class TransportTest(unittest.TestCase):
         from u2c_customfw.transport import linux
         self.assertIs(transport._backend(), linux)
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux hidraw only")
     def test_linux_descriptor_usage_page_parser(self):
         from u2c_customfw.transport import hidraw
         # Usage Page (vendor 0xff7a), Usage (1), Collection (Application).

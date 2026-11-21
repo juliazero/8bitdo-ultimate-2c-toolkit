@@ -7,14 +7,15 @@ bank A by the hash of stock with every edit region zeroed. Addresses are image a
 import hashlib
 import struct
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from . import image
 from .image import BASE, BANK_A_SIZE
 
 BLOBS = Path(__file__).parent / "blobs"
-NAME = b"8BitDo Ultimate 2C (X/S)"
+NAME = b"8BitDo Ultimate 2C (X)"
+PREVIOUS_BT_NAME = "8BitDo Ultimate 2C (X/S)"
 OLD_NAME = b"8BitDo Ultimate 2C (One)"  # what versions before 0.2 installed: still recognised, never written
 OLD_NAME_LEN = 27
 CABLE_NAME = "8BitDo Ultimate 2C (Wired)"   # by cable, in the same style as NAME: a suggestion, written only if chosen
@@ -44,6 +45,17 @@ class Edit:
     superseded_by: str | None = None  # recipe whose edit takes over this region when it is present
     accepts: tuple[bytes, ...] = ()   # earlier contents of this edit that still count as installed
     text: Callable[[str], bytes] | None = None   # a name edit: its bytes for a name (new is the default name's)
+
+    copy_from: int | None = None  # derived from the already-built image; no vendor bytes shipped
+    copy_overrides: tuple[tuple[int, bytes], ...] = ()
+
+    def content(self, img):
+        if self.copy_from is None: return self.new
+        data=bytearray(img[self.copy_from-BASE:self.copy_from-BASE+self.size])
+        for offset,value in self.copy_overrides:
+            if offset < 0 or offset+len(value)>self.size: raise RecipeError('Copy fixup outside region')
+            data[offset:offset+len(value)]=value
+        return bytes(data)
 
     @property
     def size(self) -> int:
@@ -119,7 +131,6 @@ def _read_usb_string(region: bytes) -> str | None:   # a string descriptor, then
 
 
 def _make() -> dict[str, Recipe]:
-    pad = bytes(OLD_NAME_LEN - len(NAME))
     slot = PACKER_SLOT[1] - PACKER_SLOT[0]
     bt_name = lambda n: n.encode().ljust(OLD_NAME_LEN, b"\0")
     scan_name = lambda n: bytes([len(n) + 1, 9]) + n.encode().ljust(OLD_NAME_LEN, b"\0")
@@ -128,7 +139,7 @@ def _make() -> dict[str, Recipe]:
     def named(addr, text, **kw):
         return Edit(addr, text(DEFAULT_NAMES[addr]), text=text, **kw)
     return {r.key: r for r in (
-        Recipe("bt_xbox", "Xbox Series X|S controller over Bluetooth", (), (
+        Recipe("bt_xbox", "XInput mode over Bluetooth", (), (
             Edit(PACKER_SLOT[0], _blob("packer.bin").ljust(slot, b"\0")),
             Edit(0x18274, _blob("report-map.bin")),
             Edit(0x18390, _blob("noop.bin"), superseded_by="bt_rumble"),
@@ -138,9 +149,9 @@ def _make() -> dict[str, Recipe]:
             Edit(0x173C0, bytes.fromhex("025e04130b0905")),      # PnP ID: USB-IF, 045e:0b13, v0509
             Edit(0x18098, bytes.fromhex("0302")),                # output report reference: ID 3, output
             Edit(0x172C0, bytes.fromhex("c403")),                # GAP appearance: gamepad
-            named(0x172DC, bt_name, accepts=(OLD_NAME + pad,)),   # GATT device name
+            named(0x172DC, bt_name, accepts=(OLD_NAME.ljust(OLD_NAME_LEN,b"\0"),)),   # GATT device name
             named(0x17488, lambda n: _u32(len(n))),               # ... and its length
-            named(0x17254, scan_name, accepts=(bytes([len(OLD_NAME) + 1, 9]) + OLD_NAME + pad,)),  # scan response name
+            named(0x17254, scan_name, accepts=(bytes([len(OLD_NAME) + 1, 9]) + OLD_NAME.ljust(OLD_NAME_LEN,b"\0"),)),  # scan response name
             named(0xA214, lambda n: bytes([len(n) + 2, 0xA1])),   # scan response length immediate
         ), name=NameSlot("Bluetooth name", NAME.decode(), OLD_NAME_LEN, (0x172DC, OLD_NAME_LEN), _read_bt_name)),
         Recipe("bt_rumble", "Rumble over Bluetooth", ("bt_xbox",), (
@@ -153,6 +164,29 @@ def _make() -> dict[str, Recipe]:
             Edit(0xFA88, _blob("lrhookb.bin")),                  # motor_set: once the hold runs out, the next repeat, while connected
             Edit(0x17764, _blob("lrwrite.bin")),                 # the write callback: long_write, rumble_write and then the repeats
         )),
+        Recipe("bt_modes", "Bluetooth X / D mode selection", ("bt_xbox",), (
+            Edit(0xA410, _blob("btrfstart.bin"), accepts=(bytes.fromhex("0390809b"),)),
+            Edit(0x76D2, bytes((0,255)), accepts=(bytes((0,0x46)),)),
+            Edit(0xA138, _blob("btmac.bin"), accepts=(bytes.fromhex("07902698"),_blob("btmac03.bin"))),
+            Edit(0xA184, _blob("btbonds.bin"), accepts=(bytes.fromhex("0b90129d"),_blob("btbonds02.bin"),_blob("btbonds03.bin"))),
+            Edit(0xA478, _blob("bthome.bin"), accepts=(bytes.fromhex("02901a9e"),_blob("bthome03.bin"))),
+            Edit(0xA4B8, _blob("btstart.bin")),
+            Edit(0xA318, _blob("bttable.bin"), accepts=(_blob("bttable01.bin"),_blob("bttable02.bin"),_blob("bttable03.bin"))),
+            Edit(0xA216, _blob("btscan.bin"), accepts=(_blob("btscan01.bin"),_blob("btscan02.bin"),_blob("btscan03.bin"))),
+            Edit(0xA2E4, _blob("btpack.bin"), accepts=(_blob("btpack01.bin"),_blob("btpack02.bin"),_blob("btpack03.bin"))),
+            Edit(0x19000, bytes(51*24), copy_from=0x1743C, copy_overrides=(
+                (0x177A0-0x1743C, _u32(len(_blob("btdmap.bin")))),
+                (0x177A8-0x1743C, _u32(0x19F00)),
+                (0x17764-0x1743C, _blob("btdnoop.bin")),
+                (0x17488-0x1743C, _u32(22)),
+                (0x17490-0x1743C, _u32(0x194D4)),
+                (0x17598-0x1743C, _u32(0x194C8)),
+                (0x17778-0x1743C, _u32(0x194D0)),
+            )),
+            Edit(0x194C8, _blob("btprofile.bin")),
+            Edit(0x19540, _blob("btmodes.bin"), accepts=tuple(_blob(n).ljust(len(_blob("btmodes.bin")),b"\xff") for n in ("btmodes01.bin","btmodes02.bin","btmodes03.bin"))),
+            Edit(0x19F00, _blob("btdmap.bin"), accepts=(_blob("btdmap01.bin"),)),
+        )),
         Recipe("cable_360", "Xbox 360 controller over cable", (), (
             Edit(0x17994, bytes.fromhex("ffffff")),              # class, subclass, protocol
             Edit(0x17998, bytes.fromhex("5e048e02")),            # 045e:028e
@@ -162,19 +196,20 @@ def _make() -> dict[str, Recipe]:
             named(0xE91C, lambda n: bytes([2 + 2 * len(n)])),     # ... and the length it's sent with: movs r3, #n
         ), name=NameSlot("Name over cable", STOCK_CABLE_NAME, 38, (0x1792C, 0x4E), _read_usb_string, CABLE_NAME)),
         Recipe("dim_leds", "Dimmer LEDs", (), (
-            Edit(0x7738, _blob("led.bin")),                      # main_tick, run from RAM at 0x1738
+            Edit(0x7738, bytes(156), superseded_by="bt_switch2", copy_from=0x7738, copy_overrides=((0,_blob("led.bin")),)),                      # main_tick, run from RAM at 0x1738
             Edit(0xA43C, _blob("hook.bin")),                     # main loop calls main_tick instead of 0xfaa0
         )),
         *(Recipe(key + at, title, (), (
             Edit(0xA3FA, b"\0"),                                 # the ring doesn't light up at startup
             Edit(0xD4F0, _blob(f"ringhook{form}.bin")),          # LED task calls ring_tick for the ring
-            Edit(0xF83C, _blob(f"vhooka{form}.bin"), accepts=() if form else (_blob("vhooka10.bin"),)),   # vendor commands reach ring_vendor (since 1.2 through the battery command)
-            Edit(0xF842, _blob(f"vhookb{form}.bin"), accepts=() if form else (_blob("vhookb10.bin"),)),
-            Edit(0xA484, _blob(f"pollhook{form}.bin"), superseded_by="cpu_rest"),  # main loop samples the L4 + R4 chord; cpu_rest takes the call over
+            Edit(0xF83C, _blob(f"vhooka{form}.bin"), superseded_by="usb_dinput", accepts=() if form else (_blob("vhooka10.bin"),)) ,            # vendor commands reach ring_vendor
+            Edit(0xF842, _blob(f"vhookb{form}.bin"), superseded_by="usb_dinput", accepts=() if form else (_blob("vhookb10.bin"),)) ,
+            Edit(0xA484, _blob("pollhook5.bin" if not form else f"pollhook{form}.bin"), superseded_by="cpu_rest",
+                 accepts=(_blob("pollhook.bin"),) if not form else ()),  # main loop samples the L4 + R4 chord; cpu_rest takes the call over
             Edit(0x7640, bytes(0x90)),                           # dead RAM code, now the ring's and settings' state
             Edit(0x76D0, level.to_bytes(2, "little")),           # the level installed
-            Edit(RING_CODE[0], _blob(f"ringtail{form}.bin").ljust(RING_CODE[1] - RING_CODE[0], b"\xff"),
-                 accepts=() if form else tuple(_blob(f).ljust(RING_CODE[1] - RING_CODE[0], b"\xff") for f in ("ringtail10.bin", "ringtail12b.bin"))),   # 1.0-1.1.1's (alerts at 15 % and 5 %), 1.2 beta's (no battery command)
+            Edit(RING_CODE[0], _blob("ringtail5.bin" if not form else f"ringtail{form}.bin").ljust(RING_CODE[1] - RING_CODE[0], b"\xff"),
+                 accepts=tuple(_blob(n).ljust(RING_CODE[1]-RING_CODE[0],b"\xff") for n in ("ringtail.bin","ringtail10.bin","ringtail5-pre12.bin")) if not form else ()),
         ), "ring", earlier_form_of=key if form else None)
             for form, at in (("", ""), ("03", "@0.3")) for key, title, level in RING_LEVELS),
         *(Recipe(f"{key}@0.2", title, (), (
@@ -198,7 +233,7 @@ def _make() -> dict[str, Recipe]:
             Edit(0x7210, _blob("sram.bin").ljust(0xC0, b"\0")),   # scan_hook, run from RAM at 0x1210 (dead RAM code)
             Edit(SETTINGS_FLAG, b"\1"),                          # the code is there with any Home ring level: this says it's in use
         ), requires_group="ring"),
-        Recipe("fixes", "Fixes", (), (
+        Recipe("fixes", "Connection and idle fixes", (), (
             Edit(0xA480, _blob("hidletask.bin")),                # sticks count as activity; a lost connection searches for its full time
             Edit(0xEA88, _blob("hunplug.bin")),                  # unplugging in the Bluetooth position restarts, to find the Mac at once
             Edit(0x178CC, _blob("hota.bin")),                    # the unencrypted Bluetooth firmware update's write handler
@@ -207,30 +242,33 @@ def _make() -> dict[str, Recipe]:
             *(Edit(a, bytes([STICK_THRESHOLD])) for a in (0xB1F2, 0xB208, 0xB220, 0xB238)),  # the jitter filter's threshold
             Edit(0xA2DC, _blob("hsweep.bin")),                   # two ADC passes per report, so its average means something
         ), requires_group="ring"),
-        Recipe("cpu_rest", "Processor rest between radio events", (), (
+        Recipe("cpu_rest", "Processor rest", (), (
             Edit(0xA484, _blob("resthook.bin"), superseded_by="battery_log"),  # the main loop's 100 ms call feeds the watchdog first; takes over the ring's pollhook
-            Edit(0x6020, _blob("wdog.bin").ljust(0x94, b"\0")),  # rest_main_poll, run from RAM at 0x20 (dead RAM code)
+            Edit(0x6020, _blob("wdog5.bin").ljust(0x94, b"\0"), accepts=(_blob("wdog.bin").ljust(0x94, b"\0"),)),  # rest_main_poll, run from RAM at 0x20 (dead RAM code)
             Edit(0x848C, _blob("stall.bin").ljust(0x74, b"\0")), # stall_hook, run from RAM at 0x248c (dead RAM code)
             Edit(0xA4AE, _blob("hstall.bin")),                   # the Bluetooth branch's motor call, then the stall
             Edit(REST_FLAG, b"\1"),
         ), requires_group="ring"),
         Recipe("battery_log", "Battery log", ("cpu_rest",), (   # installed with Processor rest, never shown
-            Edit(0x9964, _blob("battlog.bin").ljust(0x9CAC - 0x9964, b"\0"),   # log_main_poll and battlog_poll, in the dead soft-float subtraction
-                 accepts=(_blob("battlog11.bin").ljust(0x9CAC - 0x9964, b"\0"),)),   # 1.1's, which unlocked the flash before each record
+            Edit(0x9964, _blob("battlog.bin").ljust(0x9CAC - 0x9964, b"\0"), superseded_by="usb_dinput", accepts=(_blob("battlog11.bin").ljust(0x9CAC-0x9964,b"\0"),)),   # log_main_poll and battlog_poll, in the dead soft-float subtraction
             Edit(0xA484, _blob("loghook.bin")),                  # the main loop's 100 ms call: the log first, then rest_main_poll
         )),
+        Recipe("usb_dinput", "USB XInput / D-input switching", (), (
+            Edit(0x9964, _blob("usbmode.bin"), accepts=(_blob("usbmode01.bin"), _blob("usbmode02.bin"), _blob("usbmode03.bin"), _blob("usbmode04.bin"), _blob("usbmode05.bin"), _blob("usbmode-pre12.bin"), _blob("usbmode-prevendor12.bin"))),  # retains Battery log, then mode switching at 0x9a70
+            # Use the stock wired D-input PID, avoiding the Bluetooth-only Steam/SDL parser.
+            Edit(0x17AFE, bytes.fromhex("1d30"), accepts=(bytes.fromhex("1b30"),)),
+            Edit(0xEA08, _u32(600000), accepts=(_u32(200000),)),  # 600 ms USB detach on a mode change
+            Edit(0xE414, _blob("usbread.bin"), accepts=(bytes.fromhex("0090769b"),)),  # prioritize flash read replies over busy D-input reports
+            Edit(0xA414, _blob("usbstart.bin"), accepts=(bytes.fromhex("0490fe9d"),)),
+            Edit(0xA488, _blob("usbhook.bin")),
+            Edit(0xF83C, _blob("usbvendora.bin"), accepts=(bytes.fromhex("fa976b99"),)),  # wraps the Home ring/Settings vendor handlers
+            Edit(0xF842, _blob("usbvendorb.bin"), accepts=(bytes.fromhex("fa977099"),)),
+        ), requires_group="ring"),
         Recipe("battery_table", "Battery level from a measured discharge", (), (   # in every install, never shown
             Edit(0x9CEC, _blob("battpct.bin").ljust(0x9D40 - 0x9CEC, b"\0")),   # battery_pct, in the dead count-leading-zeros and ffs
             Edit(0xB5B6, _blob("hpcta.bin")),                    # 0xb5a8 jumps over stock's linear formula ...
             Edit(0xB5C0, _blob("hpctb.bin")),                    # ... to the call that now gives the voltage to battery_pct
             Edit(0xB62C, _u32(3300)),                            # 1 % without smoothing only below 3300 mV, not below 3499
-        )),
-        Recipe("bt_plain_icon", "No keyboard icon in macOS's battery widget", ("bt_xbox",), (   # with bt_xbox, never shown
-            # Telink's HID template has a Boot Keyboard Input Report (0x2a22, attribute 20), which makes macOS take the
-            # controller for a keyboard (bluetoothd: "Detected keyboard LE HID"); a real Xbox pad has none. Another UUID,
-            # which nothing reads, leaves the attribute where it is.
-            Edit(0x172BB, bytes.fromhex("22ff")),                # its UUID in attribute 19, the characteristic declaration
-            Edit(0x17422, bytes.fromhex("22ff")),                # and attribute 20's type
         )),
         Recipe("ble_interval", "Bluetooth connection request of 12.5 ms", (), (
             Edit(0xA0DE, bytes.fromhex("0aa00aa100a2c8a3"), superseded_by="ble_fast"),  # min = max 12.5 ms, latency 0, timeout 2 s, instead of 7.5 ms and latency 59
@@ -249,6 +287,31 @@ def _make() -> dict[str, Recipe]:
 
 DEFAULT_NAMES = {a: NAME.decode() for a in (0x172DC, 0x17488, 0x17254, 0xA214)} | {a: STOCK_CABLE_NAME for a in (0x1792C, 0xE91C)}
 RECIPES: dict[str, Recipe] = _make()
+# Y owns these hooks while installed; D/X dispatch remains in its payload.
+RECIPES["bt_modes"] = replace(RECIPES["bt_modes"], edits=tuple(
+    replace(e, superseded_by="bt_switch2") if e.addr in (0xa138,0xa184,0xa2e4,0xa478,0xa4b8) else e
+    for e in RECIPES["bt_modes"].edits))
+RECIPES["bt_switch2"] = Recipe("bt_switch2", "Switch 2 Pro Controller mode (Y)",
+    ("bt_modes", "dim_leds", "settings", "cpu_rest"), tuple(
+        Edit(address, _blob(f"switch2-{address:x}.bin"))
+        for address in (0x7738,0xa138,0xa184,0xa2e4,0xa478,0xa4b8,0xa22a,0xa23a,0xd156,0x11938,0x11a00,0x14a62,0x1a000)))
+RECIPES["bt_switch2"] = replace(RECIPES["bt_switch2"], edits=tuple(
+    replace(e,superseded_by="bt_switch2_force") if e.addr in (0xa138,0xa184,0xa4b8) else e
+    for e in RECIPES["bt_switch2"].edits))
+RECIPES["bt_switch2_force"] = Recipe("bt_switch2_force", "Bluetooth: force Y at startup (diagnostic)",
+    ("bt_switch2",), tuple(Edit(a,_blob(f"switch2-force-{a:x}.bin")) for a in (0xa138,0xa184,0xa4b8)), earlier_form_of="bt_switch2")
+
+# Keep the previously distributed diagnostic payload recognizable, never offered.
+for _key in ("bt_switch2", "bt_switch2_force"):
+    _edits = []
+    for _edit in RECIPES[_key].edits:
+        _prefix = "switch2-force" if _key.endswith("force") else "switch2"
+        _previous = tuple(BLOBS / f"{_prefix}-{_edit.addr:x}-{suffix}.bin"
+                          for suffix in ("preindicator", "prememory", "prediscovery", "prehostlist", "prerx", "prevertical"))
+        _accepted = tuple(path.read_bytes() for path in _previous if path.is_file())
+        _edits.append(replace(_edit, accepts=_edit.accepts+_accepted))
+    RECIPES[_key] = replace(RECIPES[_key], edits=tuple(_edits))
+
 
 
 def _constants(stock_sha256, region_sha256, remainder_sha256):
@@ -261,7 +324,7 @@ def _constants(stock_sha256, region_sha256, remainder_sha256):
 
 def whole(img: bytes) -> bytes:
     """The whole app area: a v1.09 payload gets its blank tail."""
-    return img + b"\xff" * (image.APP_SIZE - BANK_A_SIZE) if len(img) == BANK_A_SIZE else img
+    return img + b"\xff" * (image.APP_SIZE - len(img)) if len(img) in (BANK_A_SIZE, 0x19000-BASE, image.BANK_A_ERASE_END-BASE) else img
 
 
 def _sha(b: bytes) -> str:
@@ -315,7 +378,11 @@ def build(stock: bytes, keys, stock_sha256=None, region_sha256=None, remainder_s
         for e in r.edits:
             if _sha(_region(base, e)) != regions[(e.addr, e.size)]:
                 raise RecipeError(f"{key}: stock bytes at {e.addr:#x} are not as expected")
-            img[e.addr - BASE:e.addr - BASE + e.size] = e.text(names[key]) if e.text and key in names else e.new
+            if e.copy_from is None:
+                img[e.addr - BASE:e.addr - BASE + e.size] = e.text(names[key]) if e.text and key in names else e.new
+    for key in keys:
+        for e in RECIPES[key].edits:
+            if e.copy_from is not None and e.superseded_by not in keys: img[e.addr-BASE:e.addr-BASE+e.size]=e.content(img)
     return bytes(img)
 
 
@@ -349,15 +416,15 @@ def identify(bank_a: bytes, stock_sha256=None, region_sha256=None, remainder_sha
         got = _region(bank_a, e)
         if e.text and (e.addr, e.size) in held:   # a name, which may happen to equal 8BitDo's bytes here: as the recipe's other edits
             return "any" if _sha(got) == regions[(e.addr, e.size)] else "new"
-        if got == e.new or got in e.accepts:
-            if got != e.new:
+        if got == e.content(bank_a) or got in e.accepts:
+            if got != e.content(bank_a):
                 accepted.add((e.addr, e.size))
-            return "new"
+            return "any" if _sha(got) == regions[(e.addr, e.size)] else "new"
         if _sha(got) == regions[(e.addr, e.size)]:
             return "stock"
         # the region a tweak takes over from another's (noop callback -> rumble) reads as untouched while the other is present,
         # also down a chain (the ring's pollhook -> cpu_rest's resthook -> battery_log's loghook)
-        if any(o.addr == e.addr and _taken_over_by(o, e) and got == o.new.ljust(e.size, b"\0")
+        if any(o.addr == e.addr and _taken_over_by(o, e) and (got == o.content(bank_a).ljust(e.size, b"\0") or got in o.accepts)
                for r in RECIPES.values() for o in r.edits):
             return "stock"
         return "other"

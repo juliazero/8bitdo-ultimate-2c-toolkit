@@ -59,3 +59,36 @@ and runs Long rumble over Bluetooth in a Thumb-1 interpreter, with the stock rum
 routine as built, each write through the callback pointer: Android's single long request with and without the tweak, a
 loop count honoured with no stop, SDL's resent request, pulses, buzzes, a Home ring command, a disconnection, and
 Android's and SDL's longest requests run to their end.
+
+## Experimental USB mode switching
+
+`usbmode.bin` retains `battlog.bin` at `0x9964` and adds USB mode code at
+`0x9a70`, within the existing dead soft-float area ending at `0x9cac`.
+`usbhook.bin` wraps the original `0xa488` call; `usbvendora.bin` and
+`usbvendorb.bin` wrap the ring/settings vendor handlers. State occupies the
+20-byte gap `0x84165c..0x841670`. No additional application erase area is used.
+
+`build.sh` generates these via `tools/build_usb_mode_prototype.py --integrated`
+after building the existing blobs. The generator asserts code/log boundaries;
+`packer.c` asserts the Home ring struct leaves the RAM gap available.
+Run `tools/check_usb_mode_prototype.py --backup PATH` for instruction-level
+checks on verified stock and integrated ring/settings/log/Xbox combinations.
+See `docs/usb-mode-prototype.md` for the experimental gesture and limits.
+
+## Five-second L4 + R4 shortcut
+
+`tools/build_ring_hold.py --compiler PATH_TO_TC32_GCC` compiles the current
+`main_poll` and verifies/resolves its three direct-call relocations. It preserves
+the published shared block and adds the 148-byte poll at `0x18f50`.
+`ringtail5.bin`, `pollhook5.bin` and `wdog5.bin` are the current payloads;
+the previous files remain pinned for recognition. `build.sh` first builds the
+published layout with `RING_LEGACY_LAYOUT`, then builds this separate poll.
+`tools/check_ring_hold.py` executes the actual code with LED ticks, battery
+alerts, save requests and both short/long button holds. Source-only native
+harness tests also use the five-second function (without the legacy macro).
+
+
+The Switch 2 pairing/GATT experiment in `switch2-pairing.c` and its journal
+in `switch2-bonds.c`, plus `switch2-input.c` `switch2-security.c` and `switch2-memory.c`, are offline-only and are
+not part of the installed tweaks. See `docs/switch2-prototype.md` for its TC32
+build/check commands and the remaining GATT, persistence and radio work.

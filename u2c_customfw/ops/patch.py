@@ -61,7 +61,7 @@ def plan_patch(ch, backup, stock: bytes, keys, mode: str = "boot", names=None) -
     held = {} if replacing else recipes.identify(cur).names
     for k in keys:
         slot = recipes.RECIPES[k].name if k in recipes.RECIPES else None
-        if slot and k not in names and held.get(k) and held[k] != slot.default:
+        if slot and k not in names and held.get(k) and held[k] != slot.default and not (k == "bt_xbox" and held[k] == recipes.PREVIOUS_BT_NAME):
             names[k] = held[k]
     try:
         new = recipes.build(stock, keys, names=names)
@@ -74,4 +74,7 @@ def plan_patch(ch, backup, stock: bytes, keys, mode: str = "boot", names=None) -
     tweaks = listed(recipes.RECIPES[k].title for k in shown(keys)) if shown(keys) else "no tweaks"
     called = " ".join(f"{recipes.RECIPES[k].name.label}: “{names.get(k) or recipes.RECIPES[k].name.default}”."
                       for k in shown(keys) if recipes.RECIPES[k].name)
-    return Plan(bytes(target), diff > 0, [], diff, f"{note}Installing changes {count(diff, 'byte')} of the firmware, with {tweaks}." + (f" {called}" if called else ""))
+    extension = [a for a in range(image.BANK_A_ERASE_END,image.APP_END,image.SECTOR)
+                 if cur[a-image.BASE:a-image.BASE+image.SECTOR] != new[a-image.BASE:a-image.BASE+image.SECTOR]]
+    main_changed = cur[:image.BANK_A_ERASE_END-image.BASE] != new[:image.BANK_A_ERASE_END-image.BASE]
+    return Plan(bytes(target), main_changed, extension, diff, f"{note}Installing changes {count(diff, 'byte')} of the firmware, with {tweaks}." + (f" {called}" if called else ""))

@@ -193,11 +193,11 @@ enum { ALERT_NONE, ALERT_CHARGING, ALERT_LOW, ALERT_VERY_LOW };
 
 struct ring_state {
 	u8 init, level, installed, phase, alert, save_wait, q_short, q_long;
-	u8 gap, ext_prev, full_done;
+	u8 gap, ext_prev, full_done, chord;
 	u16 charge_ticks, repeat;
 	u32 prev_btn, stop_at, ticks;
 };
-typedef char ring_state_fits[sizeof(struct ring_state) <= 0x40 ? 1 : -1]; /* the settings follow, at 0x841680 */
+typedef char ring_state_fits[sizeof(struct ring_state) <= 0x1c ? 1 : -1]; /* USB mode state: 0x84165c..0x841670; log: 0x841670; Settings: 0x841680 */
 
 void led_driver(u32 mode, u32 pin, u8 *counter); /* 0xd36c */
 void save_settings(void);                        /* 0xd538 */
@@ -267,12 +267,39 @@ static void ring_init(void)
 }
 
 /* From the main loop's slow branch, every 100 ms (0xa460). */
-void main_poll(void)
+/* Retain the published block's layout; the current entry is placed separately
+ * in the existing tail slack by packer.ld. This body is never hooked now. */
+#ifdef RING_LEGACY_LAYOUT
+#define main_poll_legacy main_poll
+#endif
+void main_poll_legacy(void)
 {
 	u32 b = RAW_BTN, pressed = b & ~S.prev_btn;
-
 	S.prev_btn = b;
 	if (S.init && (b & L4) && (b & R4) && (pressed & (L4 | R4))) {
+		S.level = S.level + 1 < RING_LEVELS ? S.level + 1 : 0;
+		S.save_wait = SAVE_TICKS;
+	}
+	if (S.stop_at && (int)(TIMER - S.stop_at) >= 0) {
+		S.stop_at = 0;
+		motor_set(0, 0, 1);
+	}
+	settings_poll();
+	stock_chords();
+}
+
+#ifndef RING_LEGACY_LAYOUT
+void main_poll(void)
+{
+	u32 b = RAW_BTN, now = TIMER;
+
+	if ((b & (L4 | R4)) != (L4 | R4)) {
+		S.chord = 0;
+	} else if (S.init && !S.chord) {
+		S.chord = 1;
+		S.prev_btn = now;
+	} else if (S.init && S.chord == 1 && (u32)(now - S.prev_btn) >= 80000000u) {
+		S.chord = 2; /* one change per hold; release either paddle to rearm */
 		S.level = S.level + 1 < RING_LEVELS ? S.level + 1 : 0;
 		S.save_wait = SAVE_TICKS;
 	}
@@ -284,6 +311,8 @@ void main_poll(void)
 	settings_poll();
 	stock_chords();
 }
+
+#endif
 
 static void pulse_now(u32 hold)
 {

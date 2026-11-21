@@ -33,15 +33,16 @@ def plan_restore(ch, backup, source: str, stock, force_unknown: bool = False, mo
             raise OpError("There's no original firmware 1.09 to restore.")
         target[image.BASE:image.APP_END] = recipes.whole(stock)
     want = bytes(target[image.BASE:image.APP_END])
-    others = []
+    others = [a for a in range(image.BANK_A_ERASE_END,image.APP_END,image.SECTOR)
+              if cur[a-image.BASE:a-image.BASE+image.SECTOR] != target[a:a+image.SECTOR]]
     if source == "backup":
         try:
-            now = probe._read(ch, mode, image.BANK_A_ERASE_END, image.CONFIG_START - image.BANK_A_ERASE_END)
+            now = probe._read(ch, mode, image.APP_END, image.CONFIG_START - image.APP_END)
         except protocol.ProtocolError as e:
             raise OpError(f"{e}. Nothing was written.") from e
-        for a in range(image.BANK_A_ERASE_END, image.CONFIG_START, image.SECTOR):
-            o = a - image.BANK_A_ERASE_END
-            if battlog.START <= a < battlog.END:   # the firmware's own log, newer than any backup: not put back
+        for a in range(image.APP_END, image.CONFIG_START, image.SECTOR):
+            o = a - image.APP_END
+            if battlog.START <= a < battlog.END:
                 continue
             if now[o:o + image.SECTOR] != bytes(target[a:a + image.SECTOR]):
                 others.append(a)

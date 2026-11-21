@@ -169,8 +169,8 @@ class ByCableTest(Base):
         self.unit = Controller(self.flash, enters=False)
         code, text = go(["patch", "--tweaks", "cable_360", "--write"], self.unit, self.tmp)
         self.assertEqual(code, 2, text)
-        self.assertIn("The controller didn't appear in update mode within 8 seconds, so nothing was written.", text)
-        self.assertIn("If the small light below the Home ring is blinking white, it is in update mode", text)
+        self.assertIn("The controller didn't restart into update mode, so nothing was written.", text)
+        self.assertIn("The small light below the Home ring will blink white.", text)
         self.assertIn("LB + RB", text)
         self.assertEqual(self.unit.ops, [])
 

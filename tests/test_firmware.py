@@ -72,7 +72,7 @@ class RecipeTest(unittest.TestCase):
 
 
 class ControllerNameTest(unittest.TestCase):
-    NEW, OLD = b"8BitDo Ultimate 2C (X/S)", b"8BitDo Ultimate 2C (One)"
+    NEW, OLD = b"8BitDo Ultimate 2C (X)", b"8BitDo Ultimate 2C (One)"
     GATT, SCAN = 0x172DC - image.BASE, 0x17254 - image.BASE + 2
 
     def setUp(self):
@@ -83,6 +83,10 @@ class ControllerNameTest(unittest.TestCase):
         out = bytearray(img)
         for a in at:
             out[a:a + len(self.OLD)] = self.OLD
+        if self.GATT in at and self.SCAN in at:
+            out[0x17488-image.BASE:0x1748c-image.BASE]=len(self.OLD).to_bytes(4,'little')
+            out[self.SCAN-2]=len(self.OLD)+1
+            out[0xa214-image.BASE]=len(self.OLD)+2
         return bytes(out)
 
     def test_new_installs_use_the_new_name(self):
@@ -98,8 +102,8 @@ class ControllerNameTest(unittest.TestCase):
         self.assertEqual(at(0xA214, 2), bytes([8, 0xA1]))                                # ... its length: movs r1, #8
         st = recipes.identify(img, **self.k)
         self.assertEqual((st.recipes, st.names), (("bt_xbox",), {"bt_xbox": "My Pad"}))
-        self.assertEqual(recipes.identify(self.built, **self.k).names, {"bt_xbox": "8BitDo Ultimate 2C (X/S)"})
-        self.assertEqual(recipes.build(self.stock, ["bt_xbox"], names={"bt_xbox": "8BitDo Ultimate 2C (X/S)"}, **self.k), self.built)
+        self.assertEqual(recipes.identify(self.built, **self.k).names, {"bt_xbox": "8BitDo Ultimate 2C (X)"})
+        self.assertEqual(recipes.build(self.stock, ["bt_xbox"], names={"bt_xbox": "8BitDo Ultimate 2C (X)"}, **self.k), self.built)
 
     def test_names_are_only_printable_text_of_the_slots_length(self):
         self.assertEqual(recipes.build(self.stock, ["bt_xbox"], names={"bt_xbox": ""}, **self.k), self.built)   # "": the default
@@ -173,15 +177,14 @@ class ControllerNameTest(unittest.TestCase):
         "pollhook.bin": "39f5251bcf8179cd85115b631cbeecd771dbe39fb856e6bc245156828b84694e",
         "ringhook.bin": "e5c2e40947f7369c2b0e4afe98c39395a0a1b9f9248de7ef69283e12b0d02330",
         "ringtail10.bin": "0e7f0b38fd8de0b272a270066ca681e9c660cecf29265279e8b107b4bacc0ae8",   # 1.0-1.1: alerts at 15 % and 5 %
-        "ringtail12b.bin": "196452d74f20e6c6541e2249b026d1650d2b6ce68540d8c868cc0d85d5c38849",   # 1.2 beta: no battery command
-        "vhooka10.bin": "9d23fcfe77ae92d7215d02012a693d4a93778e695c6ab3f56954694ee94ff858",   # 1.0-1.2 beta: straight to vendor_a
-        "vhookb10.bin": "e0c27de8ca721f16eb4541dc9e9a70cda2f7ed2ec67c5fa552317b1f9ae35bff",   # 1.0-1.2 beta: straight to vendor_b
         "rumble.bin": "7acd917ab3f4dd6a54ab272a19f13e877a010dc17f9d8c899e28ea52125af5cf",
         "sram.bin": "c3f0966446812c97bb976ba0f28b9a4b8a158939d6f158107faa747c3b546699",
+        "vhooka10.bin": "9d23fcfe77ae92d7215d02012a693d4a93778e695c6ab3f56954694ee94ff858",
+        "vhookb10.bin": "e0c27de8ca721f16eb4541dc9e9a70cda2f7ed2ec67c5fa552317b1f9ae35bff",
         }
         for name, sha in published.items():
             self.assertEqual(hashlib.sha256((recipes.BLOBS / name).read_bytes()).hexdigest(), sha, name)
-        self.assertEqual(recipes.NAME, b"8BitDo Ultimate 2C (X/S)")
+        self.assertEqual(recipes.PREVIOUS_BT_NAME, "8BitDo Ultimate 2C (X/S)")
         self.assertEqual([level for _, _, level in recipes.RING_LEVELS], [0, 1, 10, 50, 250, 0xFFFF])
 
     def test_the_old_name_alone_does_not_count_as_the_tweak(self):
@@ -248,10 +251,6 @@ class UpdateNoticeTest(unittest.TestCase):
         self.assertTrue(st.known and not st.older and update_available(st))
         self.assertTrue(update_available(recipes.identify(recipes.build(self.stock, ["cpu_rest", "ring_5", "ble_interval", "battery_table"], **self.k), **self.k)), "1.0's Processor rest, without the log")
         self.assertFalse(update_available(recipes.identify(recipes.whole(self.stock), **self.k)), "the original firmware has nothing to update")
-        no_icon = recipes.build(self.stock, [k for k in with_hidden(self.ALL) if k != "bt_plain_icon"], **self.k)   # the Xbox identity before 1.2
-        self.assertTrue(update_available(recipes.identify(no_icon, **self.k)))
-        with self.assertRaises(RecipeError):
-            recipes.build(self.stock, ["bt_plain_icon"], **self.k)   # only with the Xbox identity over Bluetooth
 
 
 class FromEarlierVersionsTest(unittest.TestCase):
@@ -367,7 +366,7 @@ class FromEarlierVersionsTest(unittest.TestCase):
     def test_cpu_rest_installs_the_hooks_the_islands_and_the_flag(self):
         img = recipes.build(self.stock, self.FOUR + ["cpu_rest"], **self.k)
         at = lambda a, n: img[a - image.BASE:a - image.BASE + n]
-        for addr, name in ((0xA484, "resthook.bin"), (0xA4AE, "hstall.bin"), (0x6020, "wdog.bin"), (0x848C, "stall.bin")):
+        for addr, name in ((0xA484, "resthook.bin"), (0xA4AE, "hstall.bin"), (0x6020, "wdog5.bin"), (0x848C, "stall.bin")):
             blob = recipes._blob(name)
             self.assertEqual(at(addr, len(blob)), blob, name)
         self.assertEqual(at(0x18FF2, 1), b"\1")
@@ -379,7 +378,7 @@ class FromEarlierVersionsTest(unittest.TestCase):
         at = lambda a, n: img[a - image.BASE:a - image.BASE + n]
         self.assertEqual(at(0xA484, 4), recipes._blob("loghook.bin"))   # the 100 ms call goes to the log first
         self.assertEqual(at(0x9964, len(recipes._blob("battlog.bin"))), recipes._blob("battlog.bin"))
-        self.assertEqual(at(0x6020, len(recipes._blob("wdog.bin"))), recipes._blob("wdog.bin"))   # Processor rest's own code as before
+        self.assertEqual(at(0x6020, len(recipes._blob("wdog5.bin"))), recipes._blob("wdog5.bin"))   # Processor rest's own code as before
         st = recipes.identify(img, **self.k)
         self.assertEqual((st.known, st.recipes), (True, tuple(sorted(self.FOUR + ["cpu_rest", "battery_log"]))))
         with_11 = bytearray(img)   # 1.1's log, which unlocked the flash, still counts as installed

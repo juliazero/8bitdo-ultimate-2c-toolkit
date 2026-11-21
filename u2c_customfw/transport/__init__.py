@@ -15,7 +15,8 @@ class DeviceInfo:
     name: str
     handle: object
     version: int = 0   # bcdDevice
-    manufacturer: str = ""   # "Microsoft" on a real Xbox controller, which has the 2C's Xbox IDs over Bluetooth
+    usage: int = 0
+    manufacturer: str = ""   # Disambiguate real Microsoft Xbox controllers from the 2C over BLE.
 
 
 class Channel(Protocol):
@@ -29,6 +30,9 @@ class PermissionDenied(Exception):
 
 
 def _backend():
+    if sys.platform == "win32":
+        from . import windows
+        return windows
     if sys.platform == "darwin":
         from . import iokit
         return iokit

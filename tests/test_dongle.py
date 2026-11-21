@@ -274,6 +274,23 @@ class DongleCliTest(DongleWriteTest):
             cmd(args, self.store)
         return said
 
+    def test_backup_paired_xinput_receiver_with_controller_identity(self):
+        from u2c_customfw import cli, transport
+        from u2c_customfw.ops import devices
+        for mode, vendor, product in (("cable", 0x2DC8, 0x310A), ("cable_360", 0x045E, 0x028E)):
+            with self.subTest(mode=mode):
+                w = World(self.full)
+                info = transport.DeviceInfo(vendor, product, 0xFF7A, "USB", "8BitDo", None, 0x114)
+                w.find = lambda: [devices.Found(info, mode)]
+                said = self.run_cmd(cli.cmd_backup, w)
+                backups = list(self.store.glob("dongle-*.bin"))
+                self.assertTrue(backups)
+                self.assertTrue(all(p.read_bytes() == self.full for p in backups))
+                self.assertFalse(list(self.store.glob("controller-*.bin")))
+                self.assertIn("The dongle has", said[-1])
+                self.assertEqual(bytes(w.flash), self.full)
+                self.assertTrue(all(req.startswith("810505") for req in w.sent), w.sent)
+
     def test_back_up_then_install_then_restore_the_original(self):
         from u2c_customfw import cli
         w = World(self.full)

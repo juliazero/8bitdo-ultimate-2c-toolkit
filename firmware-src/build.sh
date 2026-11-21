@@ -9,7 +9,7 @@ out=$(cd "${1:-/tmp/u2c-blobs}" && pwd)
 blobs="$here/../u2c_customfw/firmware/blobs"
 cd "$here"
 rm -f "$out"/*.o "$out"/*.elf "$out"/*.bin "$out"/packer.dis
-tc32-elf-gcc -Os -Wall -Werror -ffreestanding -fno-builtin -ffunction-sections -fdata-sections ${EXTRA_CFLAGS:-} -c packer.c -o "$out/packer.o"
+tc32-elf-gcc -Os -Wall -Werror -ffreestanding -fno-builtin -ffunction-sections -fdata-sections ${EXTRA_CFLAGS:-} -DRING_LEGACY_LAYOUT -c packer.c -o "$out/packer.o"
 tc32-elf-gcc -Os -Wall -Werror -ffreestanding -fno-builtin -ffunction-sections -fdata-sections ${EXTRA_CFLAGS:-} -c settings.c -o "$out/settings.o"
 tc32-elf-gcc -Os -Wall -Werror -ffreestanding -fno-builtin -ffunction-sections -fdata-sections ${EXTRA_CFLAGS:-} -c rest.c -o "$out/rest.o"
 tc32-elf-gcc -Os -Wall -Werror -ffreestanding -fno-builtin -ffunction-sections -fdata-sections ${EXTRA_CFLAGS:-} -c battery.c -o "$out/battery.o"
@@ -36,5 +36,8 @@ if [ -n "${EXTRA_CFLAGS:-}" ] && [ -z "${TEST_COPY:-}" ]; then  # a test build m
 fi
 mkdir -p "$blobs"
 cp "$out"/{packer,noop,rumble,led,hook,ringtail,ringhook,vhooka,vhookb,pollhook,hgamea,hgameb,hbuzza,hbuzzb,hidle,hstickl,hstickr,hscan,hidletask,hunplug,hota,hsweep,resthook,hstall,battlog,loghook,battpct,hpcta,hpctb,wdog,stall,sram,report-map,dinput,longrumble,lrhooka,lrhookb,lrwrite}.bin "$blobs/"
+python3 "$here/../tools/build_ring_hold.py" --compiler "$(command -v tc32-elf-gcc)" --output "$out/ring-hold" --blobs "$blobs"
+python3 "$here/../tools/build_usb_mode_prototype.py" --integrated "$blobs"
+PYTHONPATH="$here/..${PYTHONPATH:+:$PYTHONPATH}" python3 "$here/../tools/build_bt_modes.py" --compiler "$(command -v tc32-elf-gcc)" --output "$out/bt-modes" --blobs "$blobs"
 (cd "$blobs" && { sha256sum *.bin > MANIFEST 2>/dev/null || shasum -a 256 *.bin > MANIFEST; })  # the *02.bin are 0.2.0's, kept to recognise its firmware
 ls -l "$blobs"

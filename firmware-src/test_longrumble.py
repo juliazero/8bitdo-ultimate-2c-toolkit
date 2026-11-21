@@ -59,7 +59,7 @@ class Controller:
     def call(self, pc, *args):
         r = list(args) + [0] * (16 - len(args))
         r[4:8] = [0x44444444, 0x55555555, 0x66666666, 0x77777777]
-        r[13], r[14] = SP0, RET
+        r[13], r[14] = getattr(self, "stack_top", SP0), RET
         saved = r[4:8]
         n = z = c = v = False
 
@@ -79,8 +79,14 @@ class Controller:
         steps = 0
         pc &= ~1
         while pc != RET:
+            if hasattr(self, "stack_floor"):
+                self.minimum_sp = min(getattr(self, "minimum_sp", r[13]), r[13])
+                assert self.stack_floor <= r[13] <= self.stack_top, ("stack outside reserved space",hex(r[13]))
             steps += 1
-            assert steps < 5000, "runaway"
+            assert steps < getattr(self, "max_steps", 5000), "runaway"
+            if self.trap(pc, r):
+                pc = r[14] & ~1
+                continue
             t = self.thumb(pc)
             nxt = pc + 2
             lo3, mid3 = t & 7, t >> 3 & 7
@@ -93,6 +99,11 @@ class Controller:
                 sh, a = t >> 6 & 31 or 32, r[mid3]
                 c = bool(a >> (sh - 1) & 1)
                 r[lo3] = nz(a >> sh)
+            elif t >> 11 == 0b00010:                                 # asrs rd, rm, #imm
+                sh, a = t >> 6 & 31 or 32, r[mid3]
+                c = bool(a >> (sh - 1) & 1)
+                signed = a - (1 << 32) if a >> 31 else a
+                r[lo3] = nz(signed >> sh)
             elif t >> 9 == 0b0001100:                                # adds rd, rn, rm
                 r[lo3] = addsub(r[mid3], r[t >> 6 & 7], False)
             elif t >> 9 == 0b0001101:                                # subs rd, rn, rm
@@ -113,19 +124,73 @@ class Controller:
                 op, a, b = t >> 6 & 15, r[lo3], r[mid3]
                 if op == 0x0: r[lo3] = nz(a & b)
                 elif op == 0x1: r[lo3] = nz(a ^ b)
+                elif op in (0x2,0x3,0x4):                         # register LSL/LSR/ASR
+                    shift=b&255
+                    if shift:
+                        if op==2:
+                            c=bool(a>>(32-shift)&1) if shift<=32 else False
+                            a=(a<<shift)&0xffffffff if shift<32 else 0
+                        elif op==3:
+                            c=bool(a>>(shift-1)&1) if shift<=32 else False
+                            a=a>>shift if shift<32 else 0
+                        else:
+                            c=bool(a>>(min(shift,32)-1)&1)
+                            signed=a-(1<<32) if a>>31 else a
+                            a=(signed>>min(shift,32))&0xffffffff
+                    r[lo3]=nz(a)
+                elif op in (0x5, 0x6):                            # adc / sbc
+                    carry = int(c)
+                    total = a + b + carry if op == 0x5 else a - b - (1 - carry)
+                    result = total & 0xFFFFFFFF
+                    n, z = bool(result >> 31), result == 0
+                    c = total > 0xFFFFFFFF if op == 0x5 else total >= 0
+                    v = bool(((~(a ^ b) if op == 0x5 else a ^ b) & (a ^ result)) >> 31 & 1)
+                    r[lo3] = result
                 elif op == 0x8: nz(a & b)
+                elif op == 0x9: r[lo3] = addsub(0, b, True)  # rsbs rd, rm, #0
                 elif op == 0xA: addsub(a, b, True)
                 elif op == 0xC: r[lo3] = nz(a | b)
                 elif op == 0xD: r[lo3] = nz(a * b)
                 elif op == 0xE: r[lo3] = nz(a & ~b)
                 elif op == 0xF: r[lo3] = nz(~b)
                 else: raise AssertionError(f"ALU op {op:#x} at {pc:#x}")
+            elif t >> 12 == 0b1100:                                  # stm/ldm rn!, {r0-r7}
+                base, registers = t >> 8 & 7, t & 255
+                assert registers, "empty register list"
+                address = r[base]
+                values = list(r)
+                for register in range(8):
+                    if registers & (1 << register):
+                        if t & 0x800: r[register] = self.rd(address, 4)
+                        else: self.wr(address, values[register], 4)
+                        address += 4
+                if not (t & 0x800) or not registers & (1 << base):
+                    r[base] = address & 0xFFFFFFFF
             elif t & 0xFF87 == 0x4700:                               # bx rm
                 nxt = r[t >> 3 & 15] & ~1
             elif t == 0x46C0:                                        # nop (mov r8, r8)
                 pass
+            elif t >> 10 == 0b010001:                               # high-register add/cmp/mov, blx
+                op, rd, rm = t >> 8 & 3, (t & 7) | (t >> 4 & 8), t >> 3 & 15
+                a, b = (pc + 4 if rd == 15 else r[rd]), (pc + 4 if rm == 15 else r[rm])
+                if op == 1: addsub(a, b, True)
+                elif op == 3:
+                    r[14], nxt = pc + 2 | 1, b & ~1
+                else:
+                    value = (a + b if op == 0 else b) & 0xFFFFFFFF
+                    if rd == 15: nxt = value & ~1
+                    else: r[rd] = value
             elif t >> 11 == 0b01001:                                 # ldr rd, [pc, #imm]
                 r[t >> 8 & 7] = self.rd((pc + 4 & ~3) + (t & 0xFF) * 4, 4)
+            elif t >> 12 == 0b0101:                                 # register-offset loads/stores
+                op = t >> 9 & 7
+                size = (4, 2, 1, 1, 4, 2, 1, 2)[op]
+                a = r[mid3] + r[t >> 6 & 7]
+                if op in (0, 1, 2): self.wr(a, r[lo3], size)
+                else:
+                    value = self.rd(a, size)
+                    if op in (3, 7) and value & (1 << (size * 8 - 1)): value -= 1 << (size * 8)
+                    r[lo3] = value & 0xFFFFFFFF
             elif t >> 11 in (0b01100, 0b01101, 0b01110, 0b01111, 0b10000, 0b10001):   # str/ldr, strb/ldrb, strh/ldrh #imm5
                 kind, load = t >> 13, t >> 11 & 1
                 size = {0b011: 4 if not t >> 12 & 1 else 1, 0b100: 2}[kind]
@@ -134,6 +199,15 @@ class Controller:
                     r[lo3] = self.rd(a, size)
                 else:
                     self.wr(a, r[lo3], size)
+            elif t >> 12 == 0b1010:                                 # adr/add rd, sp, #imm8*4; flags unchanged
+                base = r[13] if t & 0x800 else ((pc + 4) & ~3)
+                r[t >> 8 & 7] = (base + (t & 255) * 4) & 0xFFFFFFFF
+            elif t & 0xFF00 == 0xB000:                             # add/sub sp, #imm7*4
+                r[13] = (r[13] + (-(t & 127) * 4 if t & 128 else (t & 127) * 4)) & 0xFFFFFFFF
+            elif t >> 12 == 0b1001:                                 # str/ldr rd, [sp, #imm8*4]
+                a = r[13] + (t & 255) * 4
+                if t & 0x800: r[t >> 8 & 7] = self.rd(a, 4)
+                else: self.wr32(a, r[t >> 8 & 7])
             elif t >> 9 == 0b1011010:                                # push {rlist, lr?}
                 for i in reversed([i for i in range(8) if t >> i & 1] + ([14] if t & 0x100 else [])):
                     r[13] -= 4
@@ -171,6 +245,10 @@ class Controller:
             pc = nxt
         assert r[4:8] == saved, f"r4-r7 not kept by the call at {hex(steps)}"
         return r[0]
+
+    def trap(self, pc, registers):
+        """Optional peripheral boundary for other instruction-level checks."""
+        return False
 
     def thumb(self, pc):
         hw = self.rd(pc, 2)

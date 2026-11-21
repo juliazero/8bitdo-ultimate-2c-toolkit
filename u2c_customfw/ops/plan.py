@@ -26,7 +26,7 @@ class OpError(Exception):
 @dataclass
 class Plan:
     image: bytes                       # target flash image (only 0x6000-0x73000 is used)
-    bank_a: bool                       # rewrite bank A (erase 0x6000-0x19000, write the payload)
+    bank_a: bool                       # rewrite bank A (erase 0x6000-0x1a000, write the payload)
     other_sectors: list = field(default_factory=list)   # 4 KB sectors outside bank A to erase and rewrite
     diff_bytes: int = 0
     summary: str = ""
@@ -50,7 +50,7 @@ def _runs(sectors):
 
 def apply(ch, plan: Plan, progress) -> None:
     check_ranges(plan)
-    total = (image.APP_SIZE if plan.bank_a else 0) + len(plan.other_sectors) * image.SECTOR
+    total = (image.BANK_A_ERASE_END-image.BASE if plan.bank_a else 0) + len(plan.other_sectors) * image.SECTOR
     done = 0
     try:
         if plan.bank_a:
@@ -60,13 +60,13 @@ def apply(ch, plan: Plan, progress) -> None:
                 boot.write_chunk(ch, a, image.BANK_A_SIZE, blk)
                 done += len(blk)
                 progress("write", done, total)
-            for a in range(image.BANK_A_END, image.APP_END, boot.CHUNK):  # the same param worked here on hardware
-                blk = plan.image[a:min(a + boot.CHUNK, image.APP_END)]
+            for a in range(image.BANK_A_END, image.BANK_A_ERASE_END, boot.CHUNK):  # the same param worked here on hardware
+                blk = plan.image[a:min(a + boot.CHUNK, image.BANK_A_ERASE_END)]
                 if blk != b"\xff" * len(blk):
                     boot.write_chunk(ch, a, image.BANK_A_SIZE, blk)
                 done += len(blk)
                 progress("write", done, total)
-            if boot.read(ch, image.BASE, image.APP_SIZE) != plan.image[image.BASE:image.APP_END]:
+            if boot.read(ch, image.BASE, image.BANK_A_ERASE_END-image.BASE) != plan.image[image.BASE:image.BANK_A_ERASE_END]:
                 raise OpError("The firmware read back from the controller doesn't match what was written. " + INTERRUPTED)
         for lo, hi in _runs(plan.other_sectors):
             boot.erase(ch, lo, hi - lo)

@@ -244,7 +244,7 @@ class PatchTest(Base):
         dev = SimBoot(self.flash)
         plan = patch.plan_patch(dev, self.backup, STOCK_A, ["bt_xbox", "bt_rumble", "cable_360", "dim_leds"])
         patch.apply(dev, plan, noprogress)
-        self.assertEqual(dev.ops[0], ("erase", 0x6000, 0x19000))
+        self.assertEqual(dev.ops[0], ("erase", image.BASE, image.BANK_A_ERASE_END))
         self.assertEqual([o for o in dev.ops if o[0] == "erase"].__len__(), 1)
         writes = [o for o in dev.ops if o[0] == "write"]
         self.assertEqual([w[1] for w in writes], list(range(0x6000, 0x18400, 46)))
@@ -252,7 +252,7 @@ class PatchTest(Base):
         st = recipes.identify(bytes(dev.f[0x6000:0x18400]))
         self.assertEqual(st.recipes, ("bt_rumble", "bt_xbox", "cable_360", "dim_leds"))
         self.assertEqual(bytes(dev.f[:0x6000]), self.flash[:0x6000])
-        self.assertEqual(bytes(dev.f[0x19000:]), self.flash[0x19000:])
+        self.assertEqual(bytes(dev.f[image.APP_END:]), self.flash[image.APP_END:])
 
     def test_changing_the_ring_level_replaces_the_previous_one(self):
         dev = SimBoot(self.flash)
@@ -365,7 +365,13 @@ class RestoreTest(Base):
             sent = sorted((a, end) for a, end, _ in other if lo <= a < hi)
             self.assertEqual(sent[0][0], lo)
             self.assertTrue(all(b[0] == a[1] or self.flash[a[1]:b[0]] == b"\xff" * (b[0] - a[1]) for a, b in zip(sent, sent[1:])))
-        self.assertEqual(bytes(dev.f[0x19000:image.CONFIG_START]), self.flash[0x19000:image.CONFIG_START])
+        self.assertEqual(bytes(dev.f[image.APP_END:image.CONFIG_START]), self.flash[image.APP_END:image.CONFIG_START])
+
+    def test_a_backup_restore_leaves_the_battery_log_alone(self):
+        f = bytearray(self.flash)
+        f[battlog.START:battlog.START + 16] = bytes(range(16))   # records written since the backup
+        f[battlog.END - 8:battlog.END] = bytes(8)
+        self.assertEqual(restore.plan_restore(SimBoot(bytes(f)), self.backup, "backup", None).other_sectors, [])
 
     def test_a_backup_restore_leaves_the_battery_log_alone(self):
         f = bytearray(self.flash)
@@ -383,7 +389,7 @@ class RestoreTest(Base):
         plan = restore.plan_restore(dev, self.backup, "stock", STOCK_A)
         patch.apply(dev, plan, noprogress)
         self.assertEqual(bytes(dev.f[0x6000:0x18400]), STOCK_A)
-        self.assertEqual(bytes(dev.f[0x19000:]), before[0x19000:])
+        self.assertEqual(bytes(dev.f[image.APP_END:]), before[image.APP_END:])
 
     def test_a_pending_update_refuses_restoring_the_original_but_not_the_backup(self):
         f = bytearray(self.flash)
@@ -639,6 +645,12 @@ class VersionTest(Base):
 
 
 class DevicesTest(unittest.TestCase):
+    def test_usb_dinput_is_distinct_from_bluetooth(self):
+        usb = transport.DeviceInfo(0x2DC8, 0x301B, 1, 'USB', '8BitDo', None)
+        bluetooth = transport.DeviceInfo(0x2DC8, 0x301B, 1, 'Bluetooth Low Energy', '8BitDo', None)
+        with mock.patch.object(transport, 'list_devices', return_value=[usb, bluetooth]):
+            self.assertEqual([f.mode for f in devices.find()], ['cable_dinput', 'bluetooth'])
+
     def test_modes(self):
         d = lambda v, p, up=0, tr="USB": transport.DeviceInfo(v, p, up, tr, "x", None)
         listing = [d(0x2DC8, 0x310A, 0xFF7A), d(0x045E, 0x028E, 0xFF7A), d(0x045E, 0x028E, 1), d(0x2DC8, 0x3208, 0x8C),

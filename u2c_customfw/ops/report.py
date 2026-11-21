@@ -11,7 +11,7 @@ from . import shown
 def log_tail(store, n: int = 30) -> str:
     """The last n lines of the app's log, or an empty string if there is none yet."""
     log = Path(store) / "u2c-customfw.log"
-    return "\n".join(log.read_text().splitlines()[-n:]) if log.exists() else ""
+    return "\n".join(log.read_text(encoding="utf-8", errors="replace").splitlines()[-n:]) if log.exists() else ""
 
 
 def clean_extras(raw) -> dict:

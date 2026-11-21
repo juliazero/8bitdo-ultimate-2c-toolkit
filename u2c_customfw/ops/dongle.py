@@ -10,6 +10,7 @@ Nothing outside bank A is ever written: the update record, bank B, the calibrati
 import datetime
 import errno
 import hashlib
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -176,10 +177,11 @@ def read_unit(ch, in_boot: bool = False) -> bytes:
         raise OpError(str(e)) from e
 
 
-def backup(ch, store: Path, progress) -> Path:
+def backup(ch, store: Path, progress, in_boot=False) -> Path:
     """The whole 128 KB read twice, compared, and kept as dongle-YYYYMMDD-HHMMSS.bin."""
-    a = _read(ch, 0, FLASH, lambda d, t: progress("pass 1", d, t))
-    b = _read(ch, 0, FLASH, lambda d, t: progress("pass 2", d, t))
+    read = boot.read if in_boot else _read
+    a = read(ch, 0, FLASH, lambda d, t: progress("pass 1", d, t))
+    b = read(ch, 0, FLASH, lambda d, t: progress("pass 2", d, t))
     if a != b:
         raise OpError("The two reads of the dongle's memory differ, so nothing was saved. Try again in another USB port.")
     store.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -254,14 +256,30 @@ def _wait(find, mode, seconds, step):
 _REENUMERATION_ERRNOS = frozenset((errno.EIO, errno.ENODEV, errno.ESHUTDOWN))
 
 
+def _reenumeration_error(error):
+    # Windows HIDAPI reports an unplug during a pending read without an errno.
+    # Accept only its exact read-disconnect error at the two restart commands;
+    # callers must rediscover the device, and verify boot identity before writes.
+    return (error.errno in _REENUMERATION_ERRNOS or
+            (sys.platform == "win32" and error.errno is None and error.args == ("read error",)))
+
+
 def _request_update_mode(ch):
     try:
         ch.xfer(bytes([0x81, 0x05, 0x00, 0x51, 0x00]).ljust(64, b"\0"), 0.5)
     except OSError as e:
-        if e.errno not in _REENUMERATION_ERRNOS:
+        if not _reenumeration_error(e):
             raise
         # An expected USB disconnect is verified by finding and identifying
         # the dongle bootloader; never interpret EIO alone as success.
+
+
+def _request_restart(ch):
+    try:
+        ch.xfer(boot.request(7), 0.5)
+    except OSError as exc:
+        if not _reenumeration_error(exc):
+            raise
 
 
 def mode_test(find, open_channel, wait: float = 0.3) -> str:
@@ -287,11 +305,7 @@ def mode_test(find, open_channel, wait: float = 0.3) -> str:
     try:
         if boot.identify(ch) != boot.DONGLE_ID:
             raise OpError("Bootloader identity is not 0x301c. No restart or flash commands were sent.")
-        try:
-            ch.xfer(boot.request(7), 0.5)
-        except OSError as e:
-            if e.errno not in _REENUMERATION_ERRNOS:
-                raise
+        _request_restart(ch)
     finally:
         ch.close()
     if _wait(find, "dongle", 10, wait) is None:
@@ -363,11 +377,7 @@ def apply(find, open_channel, unit_backup: bytes, bank: bytes, progress, wait: f
                 raise OpError("The dongle's firmware read back doesn't match what was written. " + INTERRUPTED)
         except protocol.ProtocolError as e:
             raise OpError(f"{e}. {INTERRUPTED}") from e
-        try:   # written and read back: the restart may drop the device before it answers (hidraw on Linux)
-            ch.xfer(boot.request(7), 0.5)
-        except OSError as e:
-            if e.errno not in _REENUMERATION_ERRNOS:
-                raise
+        _request_restart(ch)
     finally:
         ch.close()
     return _wait(find, "dongle", 10, wait) is not None

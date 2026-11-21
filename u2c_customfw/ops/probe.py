@@ -8,6 +8,9 @@ from ..protocol import app, boot
 from .plan import OpError
 
 
+class PairedDongle(OpError):
+    """The update channel belongs to the receiver, despite its controller USB ID."""
+
 
 @dataclass
 class Firmware:
@@ -50,7 +53,7 @@ def check_not_dongle(ch) -> None:
     if head is None:   # no answer can't show it's the controller
         raise OpError("The controller isn't answering. Unplug it, plug it back in and try again.")
     if head == b"\xff" * 16:
-        raise OpError("This is the 2.4 GHz dongle with the controller connected through it. To change the dongle, turn the controller off.")
+        raise PairedDongle("This is the 2.4 GHz dongle with the controller connected through it. To change the dongle, turn the controller off.")
 
 
 def pending_update(ch, mode: str) -> bool:
