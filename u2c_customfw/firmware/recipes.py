@@ -271,7 +271,7 @@ def _make() -> dict[str, Recipe]:
         Recipe("usb_dinput", "USB XInput / D-input switching", (), (
             Edit(0x9964, _blob("usbmode.bin"), accepts=(_blob("usbmode-pre-battery-lock-fix.bin"), _blob("usbmode01.bin"), _blob("usbmode02.bin"), _blob("usbmode03.bin"), _blob("usbmode04.bin"), _blob("usbmode05.bin"), _blob("usbmode-pre12.bin"), _blob("usbmode-prevendor12.bin"), _blob("usbmode-prebaseline.bin"))),  # retains Battery log, then mode switching at 0x9a70
             # Use the stock wired D-input PID, avoiding the Bluetooth-only Steam/SDL parser.
-            Edit(0x17AFE, bytes.fromhex("1d30"), accepts=(bytes.fromhex("1b30"),)),
+            Edit(0x17AFE, bytes.fromhex("1d30"), superseded_by="usb_dinput_steam", accepts=(bytes.fromhex("1b30"),)),
             Edit(0xEA08, _u32(600000), accepts=(_u32(200000),)),  # 600 ms USB detach on a mode change
             Edit(0xE414, _blob("usbread.bin"), accepts=(bytes.fromhex("0090769b"),)),  # prioritize flash read replies over busy D-input reports
             Edit(0xA414, _blob("usbstart.bin"), accepts=(bytes.fromhex("0490fe9d"),)),
@@ -279,6 +279,12 @@ def _make() -> dict[str, Recipe]:
             Edit(0xF83C, _blob("usbvendora.bin"), accepts=(bytes.fromhex("fa976b99"),)),  # wraps the Home ring/Settings vendor handlers
             Edit(0xF842, _blob("usbvendorb.bin"), accepts=(bytes.fromhex("fa977099"),)),
         ), requires_group="ring"),
+        Recipe("usb_dinput_steam", "USB DInput: Bluetooth-style Steam mapping (experimental)", ("usb_dinput",), (
+            Edit(0x17AFE, bytes.fromhex("1b30")),  # Steam's known BT-DInput VID/PID; requires the same data layout
+            Edit(0x17B74, _blob("usbsteam-map.bin")),  # reorder input fields; keep vendor 02/81 read/write reports
+            Edit(0xEF88, _blob("usbsteamhook.bin")),  # only the stock USB DInput input packer
+            Edit(0x19F80, _blob("usbsteam.bin")),  # 44 unused bytes following the Bluetooth DInput map
+        )),
         Recipe("battery_table", "Battery level from a measured discharge", (), (   # in every install, never shown
             Edit(0x9CEC, _blob("battpct.bin").ljust(0x9D40 - 0x9CEC, b"\0")),   # battery_pct, in the dead count-leading-zeros and ffs
             Edit(0xB5B6, _blob("hpcta.bin")),                    # 0xb5a8 jumps over stock's linear formula ...
@@ -429,6 +435,15 @@ def identify(bank_a: bytes, stock_sha256=None, region_sha256=None, remainder_sha
 
     def edit_state(e):
         got = _region(bank_a, e)
+        # An older USB DInput tweak used PID 301b while retaining the original
+        # wired report layout. Do not mistake that single historical PID for
+        # a partially installed new Steam layout recipe. Other edits of the
+        # new recipe must remain exactly stock for this compatibility path.
+        usb_steam = RECIPES["usb_dinput_steam"].edits
+        if (e is usb_steam[0] and got == bytes.fromhex("1b30") and
+                all(_sha(_region(bank_a, other)) == regions[(other.addr, other.size)]
+                    for other in usb_steam[1:])):
+            return "stock"
         if e.text and (e.addr, e.size) in held:   # a name, which may happen to equal 8BitDo's bytes here: as the recipe's other edits
             return "any" if _sha(got) == regions[(e.addr, e.size)] else "new"
         if got == e.content(bank_a) or got in e.accepts:

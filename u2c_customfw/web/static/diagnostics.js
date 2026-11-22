@@ -194,8 +194,8 @@ function windowsCategory(p, inputMode = null) {
   const id = p.id.toLowerCase();
   if (/vendor:\s*2dc8\s+product:\s*301d|2dc8[-:]301d/.test(id)) return "USB · D-input";
   if (/vendor:\s*2dc8\s+product:\s*301b|2dc8[-:]301b/.test(id)) {
-    const matches = typeof st === 'undefined' ? [] : (st.devices || []).filter(d => ['cable_dinput','bluetooth'].includes(d.mode));
-    return matches.length === 1 ? (matches[0].mode === 'cable_dinput' ? 'USB · D-input' : 'Bluetooth · D-input') : 'Gamepad · D-input';
+    const matches = typeof st === 'undefined' ? [] : (st.devices || []).filter(d => ['cable_dinput','dongle_paired','bluetooth'].includes(d.mode));
+    return matches.length === 1 ? (matches[0].mode === 'dongle_paired' ? '2.4 GHz dongle · D-input' : matches[0].mode === 'cable_dinput' ? 'USB · D-input' : 'Bluetooth · D-input') : 'Gamepad · D-input';
   }
   if (/vendor:\s*2dc8\s+product:\s*301c|2dc8[-:]301c/.test(id)) return "2.4 GHz dongle · D-input";
   if (/vendor:\s*045e\s+product:\s*0b13|045e[-:]0b13/.test(id)) return "Bluetooth · XInput";

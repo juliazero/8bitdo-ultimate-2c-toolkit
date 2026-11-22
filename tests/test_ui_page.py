@@ -13,7 +13,7 @@ class UIPageTest(unittest.TestCase):
             self.assertNotIn(('<script src="/static/' + name + '"></script>').encode(), page)
         self.assertNotIn(b'<link rel="stylesheet"', page)
         self.assertLess(page.index(b'window.u2cStartupReady = false'), page.index(b'function windowsTick'))
-        self.assertLess(page.index(b'function settingsLive'), page.index(b'async function refresh()'))
+        self.assertLess(page.index(b'function settingsLive'), page.index(b'async function refresh('))
         self.assertIn(b'window.u2cStartupComplete();', page)
         self.assertIn(b'id="startup-status"', page)
         self.assertIn(b'id="fw-title">Starting interface', page)

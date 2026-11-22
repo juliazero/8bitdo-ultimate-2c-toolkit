@@ -327,7 +327,7 @@ class DongleCliTest(DongleWriteTest):
         self.assertIn("The dongle has firmware 1.03 with Xbox 360 controller over 2.4 GHz and D-input mode with B + Home.", said[-1])
         with self.assertRaises(cli.Exit) as e:
             self.run_cmd(cli.cmd_patch, w, tweaks="dongle_dinputt", write=True)
-        self.assertEqual(e.exception.msg, "The dongle's tweaks are dongle_360, dongle_dinput, dongle_rf_tail, dongle_rf_read. Nothing was written.")
+        self.assertEqual(e.exception.msg, "The dongle's tweaks are dongle_360, dongle_dinput, dongle_dinput_steam, dongle_rf_tail, dongle_rf_read. Nothing was written.")
         self.assertEqual(bytes(w.flash[dongle.BASE:dongle.END]), BOTH)
 
     def test_names_are_installed_and_checked(self):

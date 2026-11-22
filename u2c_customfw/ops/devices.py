@@ -39,7 +39,27 @@ def find() -> list[Found]:
     and is listed once. Other HID devices are ignored."""
     out: list[Found] = []
     listing = transport.list_devices()
+    # The Steam DInput dongle tweak changes PID 301C -> 301B on *all* DInput
+    # descriptors, including the receiver's maintenance HID.  The original
+    # matcher only considered the paired gamepad collection, leaving the idle
+    # dongle invisible (and sometimes listing both its collections separately).
+    # bcdDevice 0200 is the receiver's DInput identity; the wired controller
+    # with PID 301B has a different revision.  Never group distinct receivers.
+    steam_dongle = [d for d in listing if (d.vendor, d.product, d.version, d.transport) ==
+                    (0x2DC8, 0x301B, 0x0200, "USB")]
+    steam_gamepads = [d for d in steam_dongle if (d.usage_page, d.usage) == (1, 5)]
+    steam_services = [d for d in steam_dongle if d.usage_page in (0xFFA0, 0xFF7A)]
+    # A single receiver may advertise both gamepad and service collections.
+    # Prefer the gamepad while paired and the vendor HID while idle.  Avoid
+    # merging anything when more than one matching dongle candidate is present.
+    paired_service = len(steam_gamepads) == 1 and len(steam_services) == 1
     for d in listing:
+        if d in steam_dongle:
+            if (d.usage_page, d.usage) == (1, 5):
+                out.append(Found(d, "dongle_paired"))
+            elif d.usage_page in (0xFFA0, 0xFF7A) and not (paired_service and d is steam_services[0]):
+                out.append(Found(d, "dongle"))
+            continue
         # USB D-input: 301b on the battery-equipped model, 301d on the batteryless variant. Its gamepad
         # collection contains input 02 / output 81 for the update channel.
         if d.vendor == 0x2DC8 and d.product in (0x301B, 0x301D) and d.usage_page == 1 and d.transport == 'USB':

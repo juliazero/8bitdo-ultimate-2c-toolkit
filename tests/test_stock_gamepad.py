@@ -21,6 +21,25 @@ class StockGamepadTest(unittest.TestCase):
         self.assertIn('B', result['pressed'])
         device.write.assert_not_called()
 
+    def test_bluetooth_style_usb_and_dongle_reports(self):
+        from u2c_customfw.ops import dongle
+        # The new DInput report ID 1 contains 9 bytes, not BLE's 10th battery byte.
+        packet = bytes([1,15,127,127,127,127,64,128, (1<<2)|(1<<5), 0])
+        self.assertTrue({'L4','R4'} <= set(stock.decode(packet,0x301B,usb=True,bt_layout=True)['pressed']))
+        self.assertEqual(stock.decode(packet,0x301B,usb=True,bt_layout=True)['lt'],128/255)
+        self.assertFalse(stock.bluetooth_layout(dongle.D_STOCK_MAP))
+        self.assertTrue(stock.bluetooth_layout(dongle.D_STEAM_MAP))
+        hid,device=Mock(),Mock()
+        hid.enumerate.return_value=[dict(path=b'patched-dongle',usage_page=1,usage=5,bus_type=1,product_id=0x301B)]
+        hid.device.return_value=device
+        device.get_report_descriptor.return_value=dongle.D_STEAM_MAP
+        device.read.side_effect=[packet,[]]
+        with patch.object(stock,'_hid',return_value=hid):
+            result=stock.StockGamepad().snapshot()
+        self.assertIn('L4',result['pressed'])
+        self.assertIn('R4',result['pressed'])
+        self.assertEqual((result['lt'],result['rt']),(128/255,64/255))
+
     def test_released_triggers_are_zero(self):
         result = stock.decode(self.report())
         self.assertEqual((result['lt'], result['rt'], result['pressed']), (0, 0, []))

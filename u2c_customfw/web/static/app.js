@@ -170,15 +170,21 @@ function render() {
   if (ringReadToggle && !ringReadAllowed) ringReadToggle.checked = false;
   const switch2 = tweakBoxes().find((x) => x.value === "bt_switch2");
   if (switch2 && ["bt_xbox", "bt_modes", "dim_leds", "settings", "cpu_rest"].some((key) => !tweakBoxes().find((x) => x.value === key)?.checked)) switch2.checked = false;
+  const usbSteam = tweakBoxes().find((x) => x.value === "usb_dinput_steam");
+  const usbMode = tweakBoxes().find((x) => x.value === "usb_dinput");
+  if (usbSteam && !usbMode?.checked) usbSteam.checked = false;
   const controllerBlocked = off || !ctrl || !fw || !!fw.error || !!fw.note || isDongleFw;
-  tweakBoxes().forEach((x) => { x.disabled = controllerBlocked || ((x === rumble || x === modes) && !xbox.checked) || (x === long && !rumble.checked) || (x === ringReadToggle && !ringReadAllowed); x.parentElement.classList.toggle("off", x.disabled); });
+  tweakBoxes().forEach((x) => { x.disabled = controllerBlocked || ((x === rumble || x === modes) && !xbox.checked) || (x === long && !rumble.checked) || (x === ringReadToggle && !ringReadAllowed) || (x === usbSteam && !usbMode?.checked); x.parentElement.classList.toggle("off", x.disabled); });
   nameBoxes().forEach((b) => { const on = tweakBoxes().find((x) => x.value === b.dataset.for); b.hidden = !on.checked; b.disabled = controllerBlocked; });
   $("ctrl-tweaks").hidden = $("tweaks-opts").hidden = dongleOnly; $("dongle-tweaks").hidden = !dongleOnly;
   if (isDongleFw && fw !== dongleRead) {   // each read starts from what's installed
     dongleRead = fw; dongleBoxes().forEach((x) => (x.checked = x.defaultChecked = fw.tweaks.some((t) => t.key === x.value && t.on)));
     dongleNameBoxes().forEach(showHeld);   // a chosen name shows in its box; 8BitDo's leaves it empty
   }
-  dongleBoxes().forEach((x) => { x.disabled = busy || !dongleReady; x.closest(".tw").classList.toggle("off", x.disabled); });
+  const dongleSteam = dongleBoxes().find((x) => x.value === "dongle_dinput_steam");
+  const dongleDMode = dongleBoxes().find((x) => x.value === "dongle_dinput");
+  if (dongleSteam && !dongleDMode?.checked) dongleSteam.checked = false;
+  dongleBoxes().forEach((x) => { x.disabled = busy || !dongleReady || (x === dongleSteam && !dongleDMode?.checked); x.closest(".tw").classList.toggle("off", x.disabled); });
   dongleNameBoxes().forEach((b) => { const on = dongleBoxes().find((x) => x.value === b.dataset.for); b.hidden = !on.checked; b.disabled = on.disabled; });
   $("dongle-note").hidden = !paired;
   const installWhy = dongleOnly ? (paired ? "Turn the controller off so the dongle is connected on its own." : "") : !tweaks().length ? "Choose at least one tweak." : !fw || fw.known !== false || on109 ? ""
@@ -385,7 +391,7 @@ async function refresh(forceFirmware = false) {
     }
     else if (fw?.device === "dongle" && fw.paired) {
       // Enumeration alone cannot distinguish a paired receiver sharing the cable ID.
-      st = {...st, devices: st.devices.map(d => ["cable", "cable_360"].includes(d.mode) ? {...d, enumeratedMode: d.enumeratedMode || d.mode, mode: "dongle_paired"} : d)};
+      st = {...st, devices: st.devices.map(d => ["cable", "cable_360", "cable_dinput"].includes(d.mode) ? {...d, enumeratedMode: d.enumeratedMode || d.mode, mode: "dongle_paired"} : d)};
     }
     render();
     if (forceFirmware) { fw = null; firmwareDue = 0; }
@@ -423,7 +429,7 @@ async function readFirmware() {  // read-only; skipped while a job runs, and the
   // Correct the provisional USB identity once the memory read identifies a
   // paired receiver. Settings and the connection badge use the same mode.
   if (f.device === "dongle" && f.paired) {
-    st = {...st, devices: st.devices.map(d => ["cable", "cable_360"].includes(d.mode) ? {...d, enumeratedMode: d.enumeratedMode || d.mode, mode: "dongle_paired"} : d)};
+    st = {...st, devices: st.devices.map(d => ["cable", "cable_360", "cable_dinput"].includes(d.mode) ? {...d, enumeratedMode: d.enumeratedMode || d.mode, mode: "dongle_paired"} : d)};
   }
   fw = f; reading = false; matchInstalled(); render();
 }

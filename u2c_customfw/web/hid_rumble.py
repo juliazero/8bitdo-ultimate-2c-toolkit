@@ -53,7 +53,7 @@ class HIDRumble:
         found=cli.find()
         targets=[f for f in found if f.info.vendor==0x2dc8 and f.info.transport=='USB' and
                  ((f.mode=='cable_dinput' and f.info.product in (0x301b,0x301d)) or
-                  (f.mode=='dongle_paired' and f.info.product==0x301c))]
+                  (f.mode=='dongle_paired' and f.info.product in (0x301b,0x301c)))]
         if len(targets)==1:return targets[0]
         if targets:return None
         candidates=[f for f in found if is_bluetooth(f)]

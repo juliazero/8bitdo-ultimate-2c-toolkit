@@ -49,6 +49,8 @@ mkdir -p "$blobs"
 cp "$out"/{dongle-rf-read,dongle-rf-hook,packer,noop,rumble,led,hook,ringtail,ringhook,vhooka,vhookb,pollhook,hgamea,hgameb,hbuzza,hbuzzb,hidle,hstickl,hstickr,hscan,hidletask,hunplug,hota,hsweep,resthook,hstall,battlog,loghook,battpct,hpcta,hpctb,wdog,stall,sram,report-map,dinput,longrumble,lrhooka,lrhookb,lrwrite}.bin "$blobs/"
 python3 "$here/../tools/build_ring_hold.py" --compiler "$(command -v tc32-elf-gcc)" --output "$out/ring-hold" --blobs "$blobs"
 python3 "$here/../tools/build_usb_mode_prototype.py" --integrated "$blobs"
+PYTHONPATH="$here/..${PYTHONPATH:+:$PYTHONPATH}" python3 "$here/../tools/build_usb_steam_layout.py" --bin-dir "$(dirname "$(command -v tc32-elf-as)")" --blobs "$blobs"
+PYTHONPATH="$here/..${PYTHONPATH:+:$PYTHONPATH}" python3 "$here/../tools/build_dongle_steam_layout.py" --bin-dir "$(dirname "$(command -v tc32-elf-as)")" --blobs "$blobs"
 PYTHONPATH="$here/..${PYTHONPATH:+:$PYTHONPATH}" python3 "$here/../tools/build_bt_modes.py" --compiler "$(command -v tc32-elf-gcc)" --output "$out/bt-modes" --blobs "$blobs"
 (cd "$blobs" && { sha256sum *.bin > MANIFEST 2>/dev/null || shasum -a 256 *.bin > MANIFEST; })  # the *02.bin are 0.2.0's, kept to recognise its firmware
 ls -l "$blobs"

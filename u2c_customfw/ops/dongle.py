@@ -30,6 +30,14 @@ CHUNK = 46                    # the largest read the dongle answers
 DINPUT = (BLOBS / "dinput.bin").read_bytes()
 RF_READ = (BLOBS / "dongle-rf-read.bin").read_bytes()
 RF_HOOK = (BLOBS / "dongle-rf-hook.bin").read_bytes()   # link_mode, firmware-src/dongle.s
+# Dongle stock DInput HID map is byte-identical to the controller's stock USB
+# DInput map. The new descriptor reorders only its 9-byte input payload;
+# service/output IDs 0x02 and 0x81 remain unchanged.
+D_STEAM_MAP = (BLOBS / "usbsteam-map.bin").read_bytes()
+D_STOCK_MAP = (D_STEAM_MAP[:8] + D_STEAM_MAP[68:92] + D_STEAM_MAP[8:31]
+               + D_STEAM_MAP[31:51] + D_STEAM_MAP[51:68] + D_STEAM_MAP[92:])
+D_STEAM_CODE = (BLOBS / "dongle-steam.bin").read_bytes()
+D_STEAM_HOOK = (BLOBS / "dongle-steam-hook.bin").read_bytes()
 TWEAKS = {  # key: (title, edits as (address, 8BitDo's bytes, the tweak's bytes))
     "dongle_360": ("Xbox 360 controller over 2.4 GHz", (
         (0xF1A0, bytes.fromhex("12 01 00 02 00 00 00 08 c8 2d 0a 31 14 01 01 02 03 01"),   # the X-input device descriptor,
@@ -38,6 +46,20 @@ TWEAKS = {  # key: (title, edits as (address, 8BitDo's bytes, the tweak's bytes)
     "dongle_dinput": ("D-input mode with B + Home", (
         (0x6940, bytes.fromhex("0d 90 72 9a"), bytes.fromhex("0f 90 02 9b")),   # at link-up (RAM code, run at 0x940): bl 0xde28 -> bl 0xff48
         (0xFF48, bytes(len(DINPUT)), DINPUT),                                   # link_mode, in the zeros after the image
+    )),
+    "dongle_dinput_steam": ("DInput: Bluetooth-style Steam mapping (experimental)", (
+        # Wired/dongle DInput is normally 2dc8:301c. A Bluetooth-style report
+        # with PID 301b is only safe when both the data layout AND the HID
+        # descriptor are transformed together. XUSB VID/PID is untouched.
+        (0xF2F2, bytes.fromhex("1c30"), bytes.fromhex("1b30")),
+        (0xF334, D_STOCK_MAP, D_STEAM_MAP),
+        # Called only from the mode==1 handler image 0x773C -> 0x74E8,
+        # executed from RAM 0x173C -> 0x14E8. The hook stored at image
+        # 0x7676 runs at 0x1676, so the BL MUST use the RAM PC when
+        # targeting flash-resident helper 0xFFB0. The old image-PC-relative
+        # branch landed at 0x9FB0 and crashed the DInput task.
+        (0x7676, bytes.fromhex("09 a1 01 a2"), D_STEAM_HOOK),
+        (0xFFB0, bytes(len(D_STEAM_CODE)), D_STEAM_CODE),
     )),
     "dongle_rf_tail": ("Experimental RF tail capture (28 bytes)", (
         # After classification of RF report IDs 8D/8E/8F/90/92, the stock
@@ -225,6 +247,8 @@ def unit_backups(store: Path, unit: bytes) -> list[tuple[Path, bytes]]:
 def target(bank: bytes, tweaks, chosen=None) -> bytes:
     """Bank A with exactly these tweaks, each with the name chosen for it (tweak -> name), or else 8BitDo's own ("" too),
     made from a bank the app recognises and checked by hash."""
+    if "dongle_dinput_steam" in tweaks and "dongle_dinput" not in tweaks:
+        raise OpError("Bluetooth-style DInput mapping requires the dongle DInput mode tweak. Nothing was written.")
     chosen = {k: v for k, v in (chosen or {}).items() if v != ""}
     for key, text in chosen.items():
         if key not in NAMES or key not in tweaks:
