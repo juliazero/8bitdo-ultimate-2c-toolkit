@@ -774,8 +774,8 @@ class WebTest(unittest.TestCase):
                                 "known": True, "version": 1.03,
                                 "tweaks": [{"key": "dongle_360", "title": "Xbox 360 controller over 2.4 GHz", "on": True},
                                            {"key": "dongle_dinput", "title": "D-input mode with B + Home", "on": False},
-                                           {"key": "dongle_rf_tail", "title": "Experimental RF tail capture (28 bytes)", "on": False},
-                                           {"key": "dongle_rf_read", "title": "Diagnostic RF packet read via USB", "on": False}],
+                                           {"key": "dongle_rf_tail", "title": "Capture extended RF payload (28 bytes)", "on": False},
+                                           {"key": "dongle_rf_read", "title": "Read RF packet over USB", "on": False}],
                                 "names": {"dongle_360": {"label": "X-input name", "default": "8BitDo Ultimate 2C Wireless Controller", "max": 38,
                                                          "held": "8BitDo Ultimate 2C Wireless Controller"},   # installed before names
                                           "dongle_dinput": {"label": "D-input name", "default": "8BitDo Ultimate 2C Wireless Controller", "max": 36, "held": None}}})

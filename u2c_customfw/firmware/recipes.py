@@ -279,7 +279,7 @@ def _make() -> dict[str, Recipe]:
             Edit(0xF83C, _blob("usbvendora.bin"), accepts=(bytes.fromhex("fa976b99"),)),  # wraps the Home ring/Settings vendor handlers
             Edit(0xF842, _blob("usbvendorb.bin"), accepts=(bytes.fromhex("fa977099"),)),
         ), requires_group="ring"),
-        Recipe("usb_dinput_steam", "USB DInput: Bluetooth-style Steam mapping (experimental)", ("usb_dinput",), (
+        Recipe("usb_dinput_steam", "USB DInput: Steam-compatible Bluetooth mapping", ("usb_dinput",), (
             Edit(0x17AFE, bytes.fromhex("1b30")),  # Steam's known BT-DInput VID/PID; requires the same data layout
             Edit(0x17B74, _blob("usbsteam-map.bin")),  # reorder input fields; keep vendor 02/81 read/write reports
             Edit(0xEF88, _blob("usbsteamhook.bin")),  # only the stock USB DInput input packer
@@ -295,7 +295,7 @@ def _make() -> dict[str, Recipe]:
         # untouched. RF payload length is extended from 20/22 to 28/30 bytes.
         # This may be incompatible with the receiver! Check 2.4GHz connection
         # and be prepared to restore controller firmware by USB.
-        Recipe("rf_battery_tx", "Experimental 2.4 GHz battery telemetry", (), (
+        Recipe("rf_battery_tx", "Send battery status over 2.4 GHz", (), (
             Edit(0xA350, _blob("rf-battery-hook.bin")),
             Edit(0x19A00, _blob("rf-battery.bin")),
             Edit(0xDD82, bytes((0x1d,))),  # packet size 21 -> 29

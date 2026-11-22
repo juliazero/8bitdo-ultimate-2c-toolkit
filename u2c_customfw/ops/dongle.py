@@ -47,7 +47,7 @@ TWEAKS = {  # key: (title, edits as (address, 8BitDo's bytes, the tweak's bytes)
         (0x6940, bytes.fromhex("0d 90 72 9a"), bytes.fromhex("0f 90 02 9b")),   # at link-up (RAM code, run at 0x940): bl 0xde28 -> bl 0xff48
         (0xFF48, bytes(len(DINPUT)), DINPUT),                                   # link_mode, in the zeros after the image
     )),
-    "dongle_dinput_steam": ("DInput: Bluetooth-style Steam mapping (experimental)", (
+    "dongle_dinput_steam": ("DInput: Steam-compatible Bluetooth mapping", (
         # Wired/dongle DInput is normally 2dc8:301c. A Bluetooth-style report
         # with PID 301b is only safe when both the data layout AND the HID
         # descriptor are transformed together. XUSB VID/PID is untouched.
@@ -61,7 +61,7 @@ TWEAKS = {  # key: (title, edits as (address, 8BitDo's bytes, the tweak's bytes)
         (0x7676, bytes.fromhex("09 a1 01 a2"), D_STEAM_HOOK),
         (0xFFB0, bytes(len(D_STEAM_CODE)), D_STEAM_CODE),
     )),
-    "dongle_rf_tail": ("Experimental RF tail capture (28 bytes)", (
+    "dongle_rf_tail": ("Capture extended RF payload (28 bytes)", (
         # After classification of RF report IDs 8D/8E/8F/90/92, the stock
         # receive handler at 0x6C60 copies 20 bytes from the 64-byte radio
         # staging buffer (r5+5) to the 32-byte diagnostic report buffer.
@@ -70,7 +70,7 @@ TWEAKS = {  # key: (title, edits as (address, 8BitDo's bytes, the tweak's bytes)
         # and must not be interpreted unless a complete valid trailer exists.
         (0x6C64, bytes.fromhex("14 a2"), bytes.fromhex("1c a2")),
     )),
-    "dongle_rf_read": ("Diagnostic RF packet read via USB", (
+    "dongle_rf_read": ("Read RF packet over USB", (
         # 0xD598 calls the stock flash copier 0xCD94; optionally intercept only
         # 0x843108 (up to 32 bytes), leaving every flash read untouched.
         (0xD598, bytes.fromhex("ff 97 fc 9b"), RF_HOOK),
