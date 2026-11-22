@@ -13,6 +13,8 @@ permissions:
   contents: read   # reads the release here; the tap is pushed with its own deploy key
 jobs:
   bump:
+    # A public beta should never update the stable Homebrew tap.
+    if: ${{ github.event_name != 'release' || !github.event.release.prerelease }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
