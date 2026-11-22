@@ -63,7 +63,7 @@ def main():
         command += ["--add-data", f"{trust_policy}:."]
     if sys.platform == "win32":
         command += ["--windowed", "--icon", str(work / "desktop-icon.ico"), "--hidden-import", "hid",
-                    "--hidden-import", "webview.platforms.winforms",
+                    "--hidden-import", "webview.platforms.winforms", "--collect-all", "winrt",
                     "--exclude-module", "PySide6", "--exclude-module", "PyQt5", "--exclude-module", "PyQt6",
                     "--add-data", f"{work / 'desktop-icon.ico'}:."]
     else:

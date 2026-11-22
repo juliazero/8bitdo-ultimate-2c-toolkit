@@ -278,7 +278,7 @@ function windowsTick() {
 }
 const windowsBridge = { postMessage(m) {
   if (m.op === "ring") {
-    fetch("/api/bluetooth-ring", { method: "POST", headers: { "X-Token": token, "Content-Type": "application/json" }, body: JSON.stringify({ level: m.level, save: m.save }) })
+    fetch("/api/bluetooth-ring", { method: "POST", headers: { "X-Token": token, "Content-Type": "application/json" }, body: JSON.stringify({ level: m.level, save: m.save, ...(m.profile ? { profile: m.profile } : {}) }) })
       .then(async response => { const result = await response.json(); window.u2cDiagnostics({ type: "result", op: "ring", id: m.id, ok: response.ok && !!result.ok, error: result.error }); })
       .catch(error => window.u2cDiagnostics({ type: "result", op: "ring", id: m.id, ok: false, error: String(error) }));
   } else if (m.op === "start") {

@@ -614,17 +614,38 @@ def make_server(store: Path, port: int = 0):
                     return self.send(200, json.dumps({"ok": True}))
                 except OSError as exc:
                     return self.send(422, json.dumps({"error": f"Could not open the folder: {exc}"}))
+            if route == "/api/bluetooth-ring/read":
+                if sys.platform != "win32":
+                    return self.send(404, json.dumps({"error": "Windows only"}))
+                profile = req.get("profile")
+                if profile not in ("xinput", "dinput"):
+                    return self.send(400, json.dumps({"error": "Invalid Bluetooth profile"}))
+                if not runner.claim():
+                    return self.send(409, json.dumps({"error": "Another task is running."}))
+                try:
+                    from ..transport.windows_ring import read_bluetooth_ring
+                    return self.send(200, json.dumps({"level": read_bluetooth_ring(profile)}))
+                except (OSError, RuntimeError, ValueError) as exc:
+                    return self.send(422, json.dumps({"error": str(exc)}))
+                finally:
+                    runner.release()
             if route == "/api/bluetooth-ring":
                 if sys.platform != "win32":
                     return self.send(404, json.dumps({"error": "Windows only"}))
                 level, save = req.get("level"), req.get("save", False)
+                profile = req.get("profile", "xinput")
+                if profile not in ("xinput", "dinput"):
+                    return self.send(400, json.dumps({"error": "Invalid Bluetooth profile"}))
                 if type(level) is not int or level not in (*range(6), 255) or type(save) is not bool:
                     return self.send(400, json.dumps({"error": "Invalid Home ring request"}))
                 if not runner.claim():
                     return self.send(409, json.dumps({"error": "Another task is running."}))
                 try:
                     from ..transport.windows import set_bluetooth_ring
-                    set_bluetooth_ring(level, save)
+                    if profile == "xinput":
+                        set_bluetooth_ring(level, save)
+                    else:
+                        set_bluetooth_ring(level, save, profile=profile)
                     return self.send(200, json.dumps({"ok": True}))
                 except (OSError, RuntimeError, ValueError) as exc:
                     return self.send(422, json.dumps({"error": str(exc)}))

@@ -165,10 +165,13 @@ function render() {
   const long = tweakBoxes().find((x) => x.value === "bt_rumble_long"), modes = tweakBoxes().find((x) => x.value === "bt_modes");
   if (!xbox.checked) { rumble.checked = false; if(modes) modes.checked = false; }
   if (!rumble.checked) long.checked = false;
+  const ringReadToggle = tweakBoxes().find((x) => x.value === "bt_ring_read");
+  const ringReadAllowed = xbox.checked && !!tweakBoxes().find((x) => x.value === "fixes")?.checked;
+  if (ringReadToggle && !ringReadAllowed) ringReadToggle.checked = false;
   const switch2 = tweakBoxes().find((x) => x.value === "bt_switch2");
   if (switch2 && ["bt_xbox", "bt_modes", "dim_leds", "settings", "cpu_rest"].some((key) => !tweakBoxes().find((x) => x.value === key)?.checked)) switch2.checked = false;
   const controllerBlocked = off || !ctrl || !fw || !!fw.error || !!fw.note || isDongleFw;
-  tweakBoxes().forEach((x) => { x.disabled = controllerBlocked || ((x === rumble || x === modes) && !xbox.checked) || (x === long && !rumble.checked); x.parentElement.classList.toggle("off", x.disabled); });
+  tweakBoxes().forEach((x) => { x.disabled = controllerBlocked || ((x === rumble || x === modes) && !xbox.checked) || (x === long && !rumble.checked) || (x === ringReadToggle && !ringReadAllowed); x.parentElement.classList.toggle("off", x.disabled); });
   nameBoxes().forEach((b) => { const on = tweakBoxes().find((x) => x.value === b.dataset.for); b.hidden = !on.checked; b.disabled = controllerBlocked; });
   $("ctrl-tweaks").hidden = $("tweaks-opts").hidden = dongleOnly; $("dongle-tweaks").hidden = !dongleOnly;
   if (isDongleFw && fw !== dongleRead) {   // each read starts from what's installed

@@ -79,3 +79,29 @@ def snapshot():
     except (OSError, ValueError):
         pass
     return unknown
+
+
+def bluetooth_address(path):
+    """Resolve the selected HID interface to its own BLE device node, never the adapter."""
+    import re
+    api = _api()
+    path = path.decode("utf-8") if isinstance(path, bytes) else path
+    instance = _property(api.CM_Get_Device_Interface_PropertyW, path, INSTANCE)
+    if not instance or instance[0] != 0x12:
+        raise OSError("Cannot resolve the Bluetooth controller's device instance.")
+    node = C.c_uint32()
+    if api.CM_Locate_DevNodeW(C.byref(node), instance[1].decode("utf-16-le").rstrip("\0"), 0):
+        raise OSError("The Bluetooth controller is no longer connected.")
+    for _ in range(12):
+        identifier = C.create_unicode_buffer(512)
+        if not api.CM_Get_Device_IDW(node.value, identifier, len(identifier), 0):
+            match = re.match(r"BTHLE\\DEV_([0-9A-F]{12})(?:\\|$)", identifier.value, re.I)
+            if match:
+                return int(match.group(1), 16)
+            if identifier.value.upper().startswith(("BTHENUM\\DEV_", "BTH\\")):
+                break
+        parent = C.c_uint32()
+        if api.CM_Get_Parent(C.byref(parent), node.value, 0):
+            break
+        node = parent
+    raise OSError("Cannot resolve the selected controller's BLE address.")

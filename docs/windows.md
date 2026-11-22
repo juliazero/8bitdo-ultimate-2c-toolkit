@@ -139,3 +139,17 @@ failed read request once; requests that trigger operations are never retried.
 The UI accepts the task's terminal event immediately instead of waiting for a clean
 stream close. If progress disconnects earlier, it polls the authenticated status
 endpoint using that task's unique ID. This never starts the backup or flash again.
+
+### Home ring brightness over Bluetooth
+
+The optional **Read Home ring brightness over Bluetooth** tweak (`bt_ring_read`)
+requires **XInput mode over Bluetooth** and **Connection and idle fixes**. For
+DInput also enable **Bluetooth X / D mode selection**, and for writes enable
+**Rumble over Bluetooth**. It repurposes the disabled BLE OTA service as a
+read-only characteristic with two bytes (initialized flag and level 0–5).
+After installing over USB, remove and pair the X and D profiles again so
+Windows discovers the changed GATT table. The Windows Settings tab reads the
+live level once on entry and provides **Read Ring Level** for changes made on
+the controller. A Bluetooth save request is not an acknowledgement of a flash
+write; power-cycle the controller to verify persistence. This feature does not
+use the Nintendo Y profile, nor does it add support for the 2.4 GHz receiver.

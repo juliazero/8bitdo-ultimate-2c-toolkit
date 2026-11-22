@@ -23,5 +23,5 @@ assert.match(elements.get('ring-note').textContent, /does not report the current
 context.st.devices = [{mode: 'bluetooth'}];
 vm.runInContext('ringRender()', context);
 assert.ok(buttons.every(button => button.disabled));
-assert.match(elements.get('ring-note').textContent, /requires the Xbox Series X\|S and Rumble over Bluetooth tweaks/);
+assert.match(elements.get('ring-note').textContent, /requires the XInput mode over Bluetooth and Rumble over Bluetooth tweaks/);
 console.log('Bluetooth ring state labeling: passed');

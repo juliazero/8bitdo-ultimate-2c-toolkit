@@ -12,6 +12,7 @@ from pathlib import Path
 
 from . import image
 from .image import BASE, BANK_A_SIZE
+from ..transport.ring_protocol import SERVICE_UUID, LEVEL_UUID
 
 BLOBS = Path(__file__).parent / "blobs"
 NAME = b"8BitDo Ultimate 2C (X)"
@@ -237,6 +238,20 @@ def _make() -> dict[str, Recipe]:
             Edit(0xA480, _blob("hidletask.bin")),                # sticks count as activity; a lost connection searches for its full time
             Edit(0xEA88, _blob("hunplug.bin")),                  # unplugging in the Bluetooth position restarts, to find the Mac at once
             Edit(0x178CC, _blob("hota.bin")),                    # the unencrypted Bluetooth firmware update's write handler
+        ), requires_group="ring"),
+        # The stock OTA service is the last service (handles 46..50). It is already
+        # disabled by fixes; replace it with a read-only private service, keeping
+        # the HID tables, report descriptors and all earlier handles unchanged.
+        # No new executable code, RAM allocation or flash region is needed.
+        Recipe("bt_ring_read", "Read Home ring brightness over Bluetooth", ("bt_xbox", "fixes"), (
+            Edit(0x172C4, bytes((0x02, 48, 0)) + LEVEL_UUID.bytes[::-1]),
+            Edit(0x172FC, LEVEL_UUID.bytes[::-1]),
+            Edit(0x1731C, SERVICE_UUID.bytes[::-1]),
+            Edit(0x1743C, _u32(48)),                            # highest attribute handle
+            Edit(0x1788C, b"\x03\x00"),                      # service + declaration + value
+            Edit(0x178BE, b"\x01"),                           # ATT read only
+            Edit(0x178C0, _u32(2)),                             # ring init flag + live level
+            Edit(0x178C8, _u32(0x841640)),                      # existing ring_state in RAM
         ), requires_group="ring"),
         Recipe("stick_precision", "Finer stick movement", (), (
             *(Edit(a, bytes([STICK_THRESHOLD])) for a in (0xB1F2, 0xB208, 0xB220, 0xB238)),  # the jitter filter's threshold

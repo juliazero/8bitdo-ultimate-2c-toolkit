@@ -680,7 +680,7 @@ class WebTest(unittest.TestCase):
         self.assertEqual((data["version"], data["version_from"]), (1.09, "update record"))
         self.assertEqual((data["pending"], data["boot_identity"]), (False, None))
         self.assertEqual([(t["key"], t["on"]) for t in data["tweaks"]],
-                         [("bt_xbox", True), ("bt_rumble", False), ("bt_rumble_long", False), ("bt_modes", False), ("cable_360", True), ("dim_leds", False), ("battery_alerts", False), ("settings", False), ("fixes", False), ("stick_precision", False), ("cpu_rest", False), ("usb_dinput", False), ("fast_scan", False), ("ble_fast", False), ("bt_switch2", False), ("ring", False)])
+                         [("bt_xbox", True), ("bt_rumble", False), ("bt_rumble_long", False), ("bt_modes", False), ("cable_360", True), ("dim_leds", False), ("battery_alerts", False), ("settings", False), ("fixes", False), ("bt_ring_read", False), ("stick_precision", False), ("cpu_rest", False), ("usb_dinput", False), ("fast_scan", False), ("ble_fast", False), ("bt_switch2", False), ("ring", False)])
 
     def test_firmware_endpoint_in_update_mode_names_the_backup_restore_uses(self):
         flash = controller_flash()

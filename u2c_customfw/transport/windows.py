@@ -33,29 +33,39 @@ def list_devices():
     return result
 
 
-def set_bluetooth_ring(level, save=False):
-    """Send the ring tweak's marked Xbox output report; there is no device ACK.
+def _ring_device(profile):
+    profiles = {"xinput": (0x045E, 0x0B13, 3), "dinput": (0x2DC8, 0x301B, 2)}
+    if profile not in profiles:
+        raise ValueError("Invalid Bluetooth profile")
+    vid, pid, report_id = profiles[profile]
+    hid = _hid()
+    devices = []
+    for item in hid.enumerate(vid, pid):
+        path = item["path"]
+        text = (path.decode(errors="replace") if isinstance(path, bytes) else path).upper()
+        bluetooth = (item.get("bus_type") == 2 or "BTHENUM" in text
+                     or "00001812-0000-1000-8000-00805F9B34FB" in text)
+        if (bluetooth and item.get("usage_page") == 1 and item.get("usage") == 5
+                and item.get("manufacturer_string") != "Microsoft"):
+            devices.append(item)
+    if len(devices) != 1:
+        raise OSError("Connect exactly one controller in the selected Bluetooth profile to change the Home ring.")
+    return hid, devices[0]["path"], report_id
+
+
+def set_bluetooth_ring(level, save=False, profile="xinput"):
+    """Send the ring tweak's marked X/D output report; there is no device ACK.
 
     This is a 9-byte Bluetooth report, not the 64-byte firmware update protocol.
     Level 255 saves the current brightness without changing it.
     """
     if type(level) is not int or level not in (*range(6), 255) or type(save) is not bool:
         raise ValueError("Invalid Home ring request")
-    hid = _hid()
-    devices = []
-    for item in hid.enumerate(0x045E, 0x0B13):
-        path = item["path"]
-        text = (path.decode(errors="replace") if isinstance(path, bytes) else path).upper()
-        bluetooth = (item.get("bus_type") == 2 or "BTHENUM" in text
-                     or "00001812-0000-1000-8000-00805F9B34FB" in text)
-        if bluetooth and item.get("usage_page") == 1 and item.get("usage") == 5:
-            devices.append(item)
-    if len(devices) != 1:
-        raise OSError("Connect exactly one Xbox-mode controller over Bluetooth to change the Home ring.")
+    hid, path, report_id = _ring_device(profile)
     device = hid.device()
     try:
-        device.open_path(devices[0]["path"])
-        report = bytes([0x03, 0x80, level, int(save), 0, 0, 0, 0, 0])
+        device.open_path(path)
+        report = bytes([report_id, 0x80, level, int(save), 0, 0, 0, 0, 0])
         written = device.write(report)
         # HIDAPI may pad to the collection's longest output report on Windows.
         if written < len(report):

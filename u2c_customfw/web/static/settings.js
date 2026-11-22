@@ -275,6 +275,7 @@ function settingsLive(e) {  // what macOS reports, to see a change's effect stra
 }
 
 function settingsShow() {
+  ringAutoKey = null;
   const b = bridge();
   $("live-note").hidden = false;
   $("live-note").textContent = b ? "Move a stick or press a trigger to see it here." : "Live input is unavailable in this window. The settings work anyway.";
@@ -284,6 +285,7 @@ function settingsShow() {
 function settingsHide() {
   const b = bridge();
   if (b) b.postMessage({ op: "stop" });
+  ringAutoKey = null;
 }
 
 function settingsRender() {
@@ -302,28 +304,62 @@ function settingsRender() {
 
 let ringLevel = null, ringBusy = false, ringId = 0, ringMessage = "", ringTimer = null, ringAsked = null, ringRead = null, ringVia = null;
 
+let ringAutoKey = null, ringReading = false, ringReadGeneration = 0, ringConfirmed = false, ringDeviceKey = null;
+function ringBLEKey(access) {
+  if (typeof SYSTEM === "undefined" || SYSTEM !== "Windows" || access.via !== "bluetooth") return null;
+  return JSON.stringify([access.profile, (st?.devices || []).filter(d => d.mode === "bluetooth" || d.mode === "bluetooth_xbox").map(d => [d.mode, d.name, d.vendor, d.product])]);
+}
+async function ringRequestRead() {
+  const access = ringAccess(), key = ringBLEKey(access);
+  if (!key || ringBusy || ringReading) return;
+  const generation = ++ringReadGeneration;
+  ringAutoKey = key; ringReading = true; ringMessage = ""; ringRender();
+  try {
+    const data = await api("POST", "/api/bluetooth-ring/read", { profile: access.profile });
+    if (generation !== ringReadGeneration || key !== ringBLEKey(ringAccess())) return;
+    if (!Number.isInteger(data.level) || data.level < 0 || data.level > 5) throw new Error("Invalid ring level.");
+    ringLevel = data.level; ringConfirmed = true; ringMessage = "Current brightness read from the controller.";
+  } catch (e) {
+    if (generation === ringReadGeneration) { ringConfirmed = false; ringLevel = null; ringMessage = e.message; }
+  } finally {
+    if (generation === ringReadGeneration) { ringReading = false; ringRender(); }
+  }
+}
+
 function ringAccess() {  // how the card can reach the controller, or why it can't
   const modes = st ? st.devices.map((d) => d.mode) : [];
   if (busy) return { note: "Please wait until the task finishes." };
-  if (modes.some((m) => m === "cable" || m === "cable_360")) {
+  if (modes.some((m) => m === "cable" || m === "cable_360" || m === "cable_dinput")) {
     if (!fw) return { note: "Reading the firmware…" };
     if (fw.outdated) return { note: "This firmware has the Home ring from an earlier version. Install the tweaks again to change it here." };
     if (fw.ring_level === undefined || fw.ring_level === null) return { note: "Install the tweaks from the Firmware tab to change the ring here. Its code comes with Battery alerts, Controller settings, Connection and idle fixes and Processor rest." };
     return { via: "cable" };
   }
-  if (modes.includes("bluetooth_xbox")) return bridge() ? { via: "bluetooth" } : { note: "Over Bluetooth, this only works in the Mac app." };
+  if (modes.includes("bluetooth_xbox") && modes.includes("bluetooth") && typeof SYSTEM !== "undefined" && SYSTEM === "Windows") return { note: "Connect only one Bluetooth controller to change the ring." };
+  if (modes.includes("bluetooth_xbox")) return bridge() ? { via: "bluetooth", profile: "xinput" } : { note: "Over Bluetooth, this requires a desktop app." };
+  if (modes.includes("bluetooth") && typeof SYSTEM !== "undefined" && SYSTEM === "Windows" && bridge()) return { via: "bluetooth", profile: "dinput" };
   if (modes.includes("bluetooth")) return { note: "Home ring control over Bluetooth requires the XInput mode over Bluetooth and Rumble over Bluetooth tweaks. In standard Bluetooth mode, use a direct USB connection or L4 + R4 to change brightness when the Home ring tweak is installed." };
   return { note: "Connect the controller by Bluetooth or cable." };
 }
 
 function ringRender() {
-  const access = ringAccess(), off = !access.via || ringBusy;
-  if (fw && fw !== ringRead) { ringRead = fw; ringLevel = fw.ring_level === undefined ? null : fw.ring_level; }  // each read says what the ring starts at
+  const access = ringAccess(), key = ringBLEKey(access);
+  if (!busy && key !== ringDeviceKey) {
+    ringReadGeneration++; ringReading = false; ringAutoKey = null; ringConfirmed = false;
+    ringLevel = null; ringMessage = ""; ringDeviceKey = key;
+  }
+  const off = !access.via || ringBusy || ringReading;
+  if (fw && fw !== ringRead) { ringRead = fw; if (access.via !== "bluetooth") ringLevel = fw.ring_level === undefined ? null : fw.ring_level; }  // each read says what the ring starts at
   document.querySelectorAll("[data-live]").forEach((b) => { b.disabled = off; setOn(b, +b.dataset.live === ringLevel); });
   $("ring-save").disabled = off;
-  $("ring-note").textContent = access.note || ringMessage || (access.via === "bluetooth"
+  const refresh = $("ring-refresh");
+  if (refresh) { refresh.hidden = !key; refresh.disabled = off; }
+  $("ring-note").textContent = access.note || (ringReading ? "Reading the current brightness…" : ringMessage) || (access.via === "bluetooth"
     ? "Current brightness is not reported over Bluetooth, so no level is selected until you send one. This needs the Home ring and Rumble over Bluetooth tweaks. A change lasts until you turn the controller off, unless you save it."
     : "A change lasts until you turn the controller off, unless you save it.");
+  if (key && key !== ringAutoKey && !ringReading && !ringBusy && typeof tab !== "undefined" && tab === "settings" && typeof api === "function") {
+    ringAutoKey = key; Promise.resolve().then(() => { if (tab === "settings" && key === ringBLEKey(ringAccess())) ringRequestRead(); });
+  }
 }
 
 function ringDone(error, level, save) {
@@ -333,18 +369,20 @@ function ringDone(error, level, save) {
   else {
     if (level !== null) ringLevel = level;
     const ifTweaks = "If the Home ring and Rumble over Bluetooth tweaks are installed";
-    if (ringVia === "bluetooth") ringMessage = save
+    if (ringVia === "bluetooth" && ringConfirmed) ringMessage = save ? "Save command sent. Current brightness will be read again; persistence is not acknowledged by Bluetooth." : "Change sent. Reading current brightness…";
+    else if (ringVia === "bluetooth") ringMessage = save
       ? `Save command sent. ${ifTweaks}, the controller keeps its level when you turn it off. Bluetooth does not report the current or saved brightness.`
       : `Last sent level selected. ${ifTweaks}, the ring changes at once, until you turn the controller off or save it. Bluetooth does not report later changes made on the controller.`;
     else ringMessage = save ? "Saved. The controller keeps this level when you turn it off." : "Sent. Save it if you want to keep it after turning the controller off.";
   }
   ringRender();
   if (!error && save && ringVia === "cable" && typeof readFirmware === "function") readFirmware();
+  if (!error && ringVia === "bluetooth" && ringBLEKey(ringAccess()) && ringConfirmed && typeof api === "function") ringRequestRead();
 }
 
 async function ringSend(level, save) {
   const access = ringAccess();
-  if (!access.via || ringBusy) return;
+  if (!access.via || ringBusy || ringReading) return;
   ringBusy = true; ringMessage = ""; ringVia = access.via; ringRender();
   if (access.via === "cable") {
     let error = null;
@@ -353,12 +391,13 @@ async function ringSend(level, save) {
   }
   ringAsked = { id: ++ringId, level, save };
   ringTimer = setTimeout(() => ringDone("No answer from the app.", level, save), RESULT_TIMEOUT_MS);
-  bridge().postMessage({ op: "ring", level: level === null ? 255 : level, save, id: ringId });
+  bridge().postMessage({ op: "ring", level: level === null ? 255 : level, save, id: ringId, profile: access.profile });
 }
 
 addEventListener("DOMContentLoaded", () => {
   document.querySelectorAll("[data-live]").forEach((b) => (b.onclick = () => ringSend(+b.dataset.live, false)));
   document.getElementById("ring-save").onclick = () => ringSend(null, true);
+  document.getElementById("ring-refresh").onclick = ringRequestRead;
 });
 
 addEventListener("DOMContentLoaded", () => {
