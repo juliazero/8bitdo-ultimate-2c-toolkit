@@ -332,7 +332,7 @@ RECIPES: dict[str, Recipe] = _make()
 RECIPES["bt_modes"] = replace(RECIPES["bt_modes"], edits=tuple(
     replace(e, superseded_by="bt_switch2") if e.addr in (0xa138,0xa184,0xa2e4,0xa478,0xa4b8) else e
     for e in RECIPES["bt_modes"].edits))
-RECIPES["bt_switch2"] = Recipe("bt_switch2", "Switch 2 Pro Controller mode (Y)",
+RECIPES["bt_switch2"] = Recipe("bt_switch2", "NS2 Pro Controller mode (Y)",
     ("bt_modes", "dim_leds", "settings", "cpu_rest"), tuple(
         Edit(address, _blob(f"switch2-{address:x}.bin"))
         for address in (0x7738,0xa138,0xa184,0xa2e4,0xa478,0xa4b8,0xa22a,0xa23a,0xd156,0x11938,0x11a00,0x14a62,0x1a000)))

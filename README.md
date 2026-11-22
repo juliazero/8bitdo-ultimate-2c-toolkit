@@ -57,7 +57,7 @@ Or from source, with Python 3.12+: `python3 -m u2c_customfw.web` opens the app i
 
 ## Install (Linux)
 
-See [Linux installation, permissions, diagnostics and device support](docs/linux.md). From source, run `./linux/install.sh`, reconnect the controller or dongle, and launch `.venv/bin/python -m u2c_customfw.web`, which opens the app in your browser. Linux support is community-tested; platform-specific limitations are documented in the guide.
+See [Linux permissions, diagnostics and device support](docs/linux.md) and [AppImage packaging](docs/desktop-builds.md#linux-appimage). There is no project-specific Linux installer; use AppImage or a system package, and install udev rules separately if required. Source development uses a normal Python virtual environment. Platform-specific limitations are documented in the guide.
 
 ## Use
 

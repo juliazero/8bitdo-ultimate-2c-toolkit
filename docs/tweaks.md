@@ -34,10 +34,10 @@ The following options are separate, selectable tweaks. Their internal keys and f
 | Device | Tweak key | Purpose / requirement |
 | --- | --- | --- |
 | Controller | `usb_dinput_steam` | Wired Bluetooth-style Steam DInput report mapping, including L4/R4; requires `usb_dinput`. Verified on physical hardware. |
-| Dongle | `dongle_dinput_steam` | 2.4 GHz DInput report and HID layout plus PID `2dc8:301b`; requires `dongle_dinput`. Verified with Steam and physical hardware. Idle PID stays `2dc8:301c`; XInput PID stays `2dc8:310a`. |
-| Controller | `rf_battery_tx` | Sends an eight-byte battery trailer with the 2.4 GHz input packet. |
+| Dongle | `dongle_dinput_steam` | 2.4 GHz DInput report and HID layout plus PID `2dc8:301b`; requires `dongle_dinput`. Verified with Steam and physical hardware on Windows. Idle PID stays `2dc8:301c`; XInput PID stays `2dc8:310a`. |
+| Controller | `rf_battery_tx` | Sends an eight-byte battery trailer with the 2.4 GHz input packet; verified on Windows in XInput and DInput. Linux/macOS detection is untested. |
 | Dongle | `dongle_rf_tail` | Captures all 28 RF payload bytes in the diagnostic buffer. |
-| Dongle | `dongle_rf_read` | Exposes that buffer to the Toolkit's diagnostics, including battery information in DInput and XInput. |
+| Dongle | `dongle_rf_read` | Exposes that buffer to Toolkit diagnostics in DInput and XInput; tested on Windows. Linux/macOS access to the vendor HID interface still needs verification. |
 
 Battery telemetry needs the controller transmit tweak and both dongle receive/read tweaks. The three tweaks remain independently selectable so that existing recognized firmware combinations are not changed or migrated automatically. The Toolkit can show **Unrecognized firmware** for unknown firmware images; it does not silently reinterpret them.
 

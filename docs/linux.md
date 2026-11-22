@@ -9,26 +9,39 @@ The Linux port shares the firmware, backup, restore and web application logic wi
 - `pyusb` and `evdev` (installed from `pyproject.toml` on Linux)
 - libusb runtime for PyUSB
 
-## Installation
+## AppImage and source development
 
-From the repository root:
+For a desktop package, use the [AppImage build instructions](desktop-builds.md#linux-appimage).
+A prebuilt AppImage does not require a system-wide Python installation.
+System packages may provide their own dependency and udev setup.
+
+### udev access
+
+An AppImage or system package cannot assume it has access to `/dev/hidraw*`.
+Install the provided udev rule once on the host, then reconnect the dongle or
+controller:
 
 ```sh
-./linux/install.sh
+sudo install -Dm644 udev/70-8bitdo-ultimate-2c.rules /etc/udev/rules.d/70-8bitdo-ultimate-2c.rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger --subsystem-match=hidraw
 ```
 
-If the installer doesn't run (a copy without the executable bit), use `bash linux/install.sh`. The installer creates `.venv`, installs the Python package and installs `udev/70-8bitdo-ultimate-2c.rules` using `sudo`. Unplug and reconnect the controller and dongle after installation. `TAG+="uaccess"` grants permissions to an active local desktop session with systemd-logind; headless setups may need custom permissions. **Do not run the toolkit as root.**
+`TAG+="uaccess"` grants permissions to the active local session on systems
+using logind; headless machines may need different permissions. **Do not run
+the Toolkit as root.**
 
-Manual installation is also possible:
+For development directly from the source tree (no installer):
 
 ```sh
-python3 -m venv .venv
+python3.12 -m venv .venv
 .venv/bin/python -m pip install -e .
 .venv/bin/python -m u2c_customfw devices
 .venv/bin/python -m u2c_customfw.web
 ```
 
-The last command opens the app in your browser. If it doesn't, open the address it prints, including `?token=…`: without the token the page loads but can't reach the controller ("forbidden").
+The last command opens a browser. If it does not, use the URL printed by the
+server, including `?token=…`.
 
 ## Diagnostics
 

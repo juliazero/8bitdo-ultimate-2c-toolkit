@@ -1,8 +1,17 @@
-# Linux
+# Linux desktop builds
 
-Run `./linux/install.sh` for udev permissions and a local Python environment. See
-[Linux device support](../docs/linux.md).
+The supported distribution workflow is an **AppImage** (or a system package),
+not a project-specific installer. From the repository root, see
+[desktop builds](../docs/desktop-builds.md) and run:
 
-To create an AppImage, follow the [desktop build guide](../docs/desktop-builds.md)
-and then run `./linux/build-appimage.sh /path/to/appimagetool`.
-Build on Linux for your target architecture. Packaging does not install udev rules.
+```sh
+./linux/build-appimage.sh /path/to/appimagetool
+```
+
+The resulting desktop package bundles the Python runtime. Install the host's
+[udev permissions](../docs/linux.md#udev-access) separately if needed. Neither
+building nor launching an AppImage modifies udev rules. Run the Toolkit as the
+logged-in desktop user, not as root.
+
+For development from source, use a standard Python virtual environment as
+explained in [Linux support](../docs/linux.md).

@@ -1,6 +1,6 @@
 # Experimental RF battery telemetry (controller 1.09 / receiver 1.03)
 
-**Verified on one physical 2.4 GHz controller/receiver pair in DInput mode.**
+**Verified on Windows with one physical 2.4 GHz controller/receiver pair in both DInput and XInput modes.**
 The controller's original packet is 20 bytes; the optional transmitter tweak
 extends it to 28 and the dongle's `dongle_rf_tail` tweak retains the trailer.
 A user capture confirmed valid checksummed battery trailers for all 99 tested
@@ -9,17 +9,17 @@ a known-good USB backup before installing any experimental firmware tweak.
 
 ## Implementation
 
-- Controller opt-in tweak **Experimental 2.4 GHz battery telemetry** (`rf_battery_tx`)
+- Controller opt-in tweak **Send battery status over 2.4 GHz** (`rf_battery_tx`)
   wraps the stock RF input builder at `0xca0` from its call site `0xa350`,
   preserves bytes 0..19 including input checksum, and adds an 8-byte trailer
   at `0x843980+20`.
 - Stock sender `0xdd78` normally copies only 20 bytes. The recipe extends the
   copy length and its two packet-length header variants to include eight more.
-  **Receiver compatibility is unknown**. This is not a separate RF packet.
+  Receiver compatibility was confirmed on the tested physical receiver. This is not a separate RF packet.
 - Trailer offsets: 20=`A5`, 21=`5A`, 22=battery percentage, 23-24=voltage mV LE,
   25=flags (bit0 full, bit1 USB supply), 26=sequence modulo 256,
   27=XOR(C3, bytes20..26).
-- Dongle tweak **Diagnostic: read RF packet over USB** (`dongle_rf_read`) remains
+- Dongle tweak **Read RF packet over USB** (`dongle_rf_read`) remains
   **separate and optional**. It exposes 32 bytes of the most recently received
   RF frame at RAM address `0x843108` through a narrowly intercepted firmware
   read request. It does not flash the controller or send RF commands.
@@ -27,8 +27,8 @@ a known-good USB backup before installing any experimental firmware tweak.
   `dongle_paired` DInput vendor interface and shows battery percentage, voltage,
   and external supply state. The existing 60-second poll is reused. On Windows,
   XInput stock-VID/PID dongles are detected by reading the blank flash signature
-  before using the same RF battery reader (physical Windows XInput read still
-  needs confirmation).
+  before using the same RF battery reader. Windows XInput and DInput reads
+  have been physically confirmed. Linux and macOS need separate testing.
 
 ## Hardware verification
 
@@ -53,7 +53,7 @@ a known-good USB backup before installing any experimental firmware tweak.
 
 ## Caveats
 
-Longer frames could be dropped entirely, or could reach a receive handler
+On other firmware/hardware versions, longer frames could be dropped entirely, or could reach a receive handler
 that assumes the old size. The emulator tests only verify TC32 instruction
 execution, bytes 0..19, trailer formatting, and that the firmware recipe
 composes; **they do not verify RF link operation**. The GUI tweak is disabled

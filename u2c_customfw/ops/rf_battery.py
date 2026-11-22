@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Read experimental controller battery telemetry forwarded by a patched 2.4GHz receiver."""
+"""Read controller battery telemetry forwarded by a patched 2.4 GHz receiver."""
 from ..protocol import app
 from ..protocol.rf_battery import parse
 

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Experimental 2.4GHz battery trailer v1, occupying RF packet bytes 20..27.
+"""2.4 GHz battery trailer v1, occupying RF packet bytes 20..27.
 
 The factory transmitter copies only 20 bytes; this format is solely used by
 an optional extended-payload tweak. Reject unmodified/stale/unknown packets.
