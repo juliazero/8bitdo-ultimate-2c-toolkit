@@ -141,6 +141,20 @@ class AppTest(unittest.TestCase):
         dev.xfer = wrong_echo
         self.assertIsNone(app.read(dev, 0x10000, 16))
 
+    def test_settings_session_does_not_unprotect_flash_on_timeout(self):
+        from unittest import mock
+        class Silent:
+            def __init__(self):
+                self.packets = []
+            def xfer(self, data, timeout=0.5, accept=None):
+                self.packets.append(bytes(data))
+                return None
+        silent = Silent()
+        with mock.patch.object(app.time, 'sleep', lambda _: None):
+            self.assertIsNone(app.open_session(silent, allow_unprotect=False))
+        self.assertNotIn(app.WRITE_UNPROTECT, silent.packets)
+        self.assertIn(app.SESSION_START, silent.packets)
+
     def test_open_session(self):
         self.assertEqual(app.open_session(SimApp(flash())), "cold")
         dev = SimApp(flash(), needs_session=True)

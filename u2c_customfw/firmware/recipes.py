@@ -269,15 +269,22 @@ def _make() -> dict[str, Recipe]:
             Edit(0xA484, _blob("loghook.bin")),                  # the main loop's 100 ms call: the log first, then rest_main_poll
         )),
         Recipe("usb_dinput", "USB XInput / D-input switching", (), (
-            Edit(0x9964, _blob("usbmode.bin"), accepts=(_blob("usbmode-pre-battery-lock-fix.bin"), _blob("usbmode01.bin"), _blob("usbmode02.bin"), _blob("usbmode03.bin"), _blob("usbmode04.bin"), _blob("usbmode05.bin"), _blob("usbmode-pre12.bin"), _blob("usbmode-prevendor12.bin"), _blob("usbmode-prebaseline.bin"))),  # retains Battery log, then mode switching at 0x9a70
+            # Only USB mode changes arm this post-enumeration haptic callback.
+            # The sector was erased (0xff) in all earlier builds; leave it
+            # accepted for safe upgrade without reclassifying older firmware.
+            Edit(0x198D0, _blob("usb-haptic-ready.bin"), accepts=(
+                b"\xff" * len(_blob("usb-haptic-ready.bin")),
+                _blob("usb-haptic-ready-prev.bin").ljust(len(_blob("usb-haptic-ready.bin")), b"\xff"),
+            )),
+            Edit(0x9964, _blob("usbmode.bin"), accepts=(_blob("usbmode-pre-haptic-ready.bin"), _blob("usbmode-pre-settings-switch-fix.bin"), _blob("usbmode-pre-battery-lock-fix.bin"), _blob("usbmode01.bin"), _blob("usbmode02.bin"), _blob("usbmode03.bin"), _blob("usbmode04.bin"), _blob("usbmode05.bin"), _blob("usbmode-pre12.bin"), _blob("usbmode-prevendor12.bin"), _blob("usbmode-prebaseline.bin"))),  # retains Battery log, then mode switching at 0x9a70
             # Use the stock wired D-input PID, avoiding the Bluetooth-only Steam/SDL parser.
             Edit(0x17AFE, bytes.fromhex("1d30"), superseded_by="usb_dinput_steam", accepts=(bytes.fromhex("1b30"),)),
             Edit(0xEA08, _u32(600000), accepts=(_u32(200000),)),  # 600 ms USB detach on a mode change
-            Edit(0xE414, _blob("usbread.bin"), accepts=(bytes.fromhex("0090769b"),)),  # prioritize flash read replies over busy D-input reports
-            Edit(0xA414, _blob("usbstart.bin"), accepts=(bytes.fromhex("0490fe9d"),)),
+            Edit(0xE414, _blob("usbread.bin"), accepts=(_blob("usbread-pre-haptic-ready.bin"), bytes.fromhex("0090769b"),)),  # prioritize flash read replies over busy D-input reports
+            Edit(0xA414, _blob("usbstart.bin"), accepts=(_blob("usbstart-pre-haptic-ready.bin"), _blob("usbstart-pre-settings-switch-fix.bin"), bytes.fromhex("0490fe9d"))),
             Edit(0xA488, _blob("usbhook.bin")),
-            Edit(0xF83C, _blob("usbvendora.bin"), accepts=(bytes.fromhex("fa976b99"),)),  # wraps the Home ring/Settings vendor handlers
-            Edit(0xF842, _blob("usbvendorb.bin"), accepts=(bytes.fromhex("fa977099"),)),
+            Edit(0xF83C, _blob("usbvendora.bin"), accepts=(_blob("usbvendora-pre-haptic-ready.bin"), _blob("usbvendora-pre-settings-switch-fix.bin"), bytes.fromhex("fa976b99"))),  # wraps the Home ring/Settings vendor handlers
+            Edit(0xF842, _blob("usbvendorb.bin"), accepts=(_blob("usbvendorb-pre-haptic-ready.bin"), _blob("usbvendorb-pre-settings-switch-fix.bin"), bytes.fromhex("fa977099"))),
         ), requires_group="ring"),
         Recipe("usb_dinput_steam", "USB DInput: Steam-compatible Bluetooth mapping", ("usb_dinput",), (
             Edit(0x17AFE, bytes.fromhex("1b30")),  # Steam's known BT-DInput VID/PID; requires the same data layout

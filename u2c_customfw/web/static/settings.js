@@ -46,7 +46,7 @@ function settingsAccess() {  // the reason the settings can't be changed right n
   const modes = st ? st.devices.map((d) => d.mode) : [];
   if (busy) return "Please wait until the task finishes.";
   if (modes.includes("boot")) return "These settings can't be changed in update mode. Turn the controller off and connect it by cable as usual.";
-  if (!modes.some((m) => m === "cable" || m === "cable_360")) return modes.some((m) => m.startsWith("dongle")) ? "These are the controller's settings, and the dongle has none. Connect the controller by cable to change them." : "Connect the controller by cable to change these settings.";
+  if (!modes.some((m) => m === "cable" || m === "cable_360" || m === "cable_dinput")) return modes.some((m) => m.startsWith("dongle")) ? "These are the controller's settings, and the dongle has none. Connect the controller by cable to change them." : "Connect the controller by cable to change these settings.";
   if (!fw) return "Reading the firmware…";
   if (fw.error) return fw.error;
   if (!fw.recipes || !fw.recipes.includes("settings")) return SETTINGS_MISSING;
@@ -267,6 +267,16 @@ async function settingsReset() {
   settingsPaint();
 }
 
+let settingsLivePaused = false;
+function settingsToggleLive() {
+  settingsLivePaused = !settingsLivePaused;
+  const b = bridge();
+  if (b) b.postMessage({op: settingsLivePaused ? "pause" : "start", view: "settings"});
+  $("settings-live-toggle").textContent = settingsLivePaused ? "Resume Live View" : "Pause Live View";
+  $("live-note").hidden = false;
+  $("live-note").textContent = settingsLivePaused ? "Live View paused. Test USB mode switching now." : "Move a stick or press a trigger to see it here.";
+}
+
 function settingsLive(e) {  // what macOS reports, to see a change's effect straight away
   const place = (el, x, y) => { el.style.transform = `translate(${x * 24}px, ${-y * 24}px)`; };
   place($("live-left"), e.lx, e.ly); place($("live-right"), e.rx, e.ry);
@@ -278,8 +288,8 @@ function settingsShow() {
   ringAutoKey = null;
   const b = bridge();
   $("live-note").hidden = false;
-  $("live-note").textContent = b ? "Move a stick or press a trigger to see it here." : "Live input is unavailable in this window. The settings work anyway.";
-  if (b) b.postMessage({ op: "start" });
+  $("live-note").textContent = settingsLivePaused ? "Live View paused. Test USB mode switching now." : b ? "Move a stick or press a trigger to see it here." : "Live input is unavailable in this window. The settings work anyway.";
+  if (b) b.postMessage({ op: settingsLivePaused ? "pause" : "start", view: "settings" });
 }
 
 function settingsHide() {
@@ -405,4 +415,5 @@ addEventListener("DOMContentLoaded", () => {
   $("settings-reset").onclick = settingsReset;
   $("settings-retry").onclick = () => { settingsData = null; settingsRender(); };
   $("settings-goto").onclick = () => showTab("firmware");
+  $("settings-live-toggle").onclick = settingsToggleLive;
 });

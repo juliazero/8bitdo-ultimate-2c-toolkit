@@ -51,12 +51,41 @@ async function linuxTick() {
 }
 // Windows browsers expose XInput and HID gamepads without opening the firmware interface.
 let windowsPoll = null;
+// Settings Live View must not open a second HID handle for the gamepad.
+// Unlike Diagnostics, it needs only browser Gamepad API axes and triggers:
+// HID input streaming may interfere with USB DInput -> XInput switching.
+let windowsView = "diagnostics";
 let windowsRumblePoll = null, windowsNativeRumble = null, windowsRumbleBusy = false;
 let windowsNativeActive = null;
 let windowsBatteryPoll = null, windowsBatteryBusy = false, windowsBatteryPad = null;
 let windowsBattery = { level: -1, state: "unknown" };
 let windowsStockState = null, windowsStockPad = null, windowsStockAt = 0;
 let windowsStockStream = null, windowsStockRetryAt = 0, windowsStockStreamPad = null;
+// The raw DInput Gas/Brake axes are normally -1 at rest. Calibrate only
+// after seeing both axes at rest so unknown browser layouts do not produce
+// phantom half-pressed triggers. Used for Settings; Diagnostics retains the
+// more accurate native HID path.
+let windowsTriggerPad = null, windowsTriggerCalibrated = false;
+function settingsBrowserTriggers(p) {
+  if (windowsView !== "settings") return null;
+  if (p.id !== windowsTriggerPad) {
+    windowsTriggerPad = p.id; windowsTriggerCalibrated = false;
+  }
+  const gas = p.axes[3], brake = p.axes[4];
+  if (!Number.isFinite(gas) || !Number.isFinite(brake)) return null;
+  if (gas < -0.85 && brake < -0.85) windowsTriggerCalibrated = true;
+  if (!windowsTriggerCalibrated) return null;
+  const norm = n => Math.max(0, Math.min(1, (n + 1) / 2));
+  return {lt: norm(brake), rt: norm(gas)};
+}
+function setWindowsStockSuspended(suspended) {
+  if (typeof fetch !== "function") return; // Mock/simulation hosts without an HTTP transport.
+  // Explicitly close the backend's native HID handle; aborting SSE alone can
+  // leave the server-side reader active until its next write.
+  fetch("/api/windows-stock-control", {method: "POST", headers: {"X-Token": token, "Content-Type": "application/json"},
+    body: JSON.stringify({suspended})}).catch(() => {});
+}
+
 function stopWindowsStockStream() {
   windowsStockStream?.abort();
   windowsStockStream = null; windowsStockStreamPad = null;
@@ -79,7 +108,7 @@ function acceptWindowsStockState(p, state) {
   }
 }
 async function streamWindowsStock(p) {
-  if (!windowsPoll || windowsStockStream || windowsPads().length !== 1 || cableBatteryBusy || (typeof busy !== "undefined" && busy) || (typeof reading !== "undefined" && reading) || Date.now() < windowsStockRetryAt || document.hidden) return;
+  if (!windowsPoll || windowsView !== "diagnostics" || windowsStockStream || windowsPads().length !== 1 || cableBatteryBusy || (typeof busy !== "undefined" && busy) || (typeof reading !== "undefined" && reading) || Date.now() < windowsStockRetryAt || document.hidden) return;
   const control = windowsStockStream = new AbortController();
   windowsStockStreamPad = p.id;
   let reader, watchdog = setTimeout(() => control.abort(), 2000);
@@ -130,9 +159,11 @@ function mapUltimate2cBluetooth(p) {
   const pressed = [];
   const buttons = {0: "A", 1: "B", 2: "L4", 5: "R4", 3: "X", 4: "Y", 6: "LB", 7: "RB", 10: "View", 11: "Menu", 12: "Home", 13: "L3", 14: "R3"};
   for (const [index, name] of Object.entries(buttons)) if (p.buttons[index]?.pressed || p.buttons[index]?.value > .5) pressed.push(name);
-  // Digital presses can highlight the controls, but are not analog travel:
-  // they switch to 1 before a trigger reaches the end of its physical range.
-  const lt = 0, rt = 0;
+  // Settings uses the browser's raw Gas/Brake axes where the -1 neutral
+  // position has been observed. Never substitute digital button presses for
+  // analog travel; those saturate before a trigger reaches its full range.
+  const analog = settingsBrowserTriggers(p);
+  const lt = analog?.lt ?? 0, rt = analog?.rt ?? 0;
   if (p.buttons[8]?.pressed || p.buttons[8]?.value > .5) pressed.push("LT");
   if (p.buttons[9]?.pressed || p.buttons[9]?.value > .5) pressed.push("RT");
   // Hat values 0..7 are scaled to -1..1; neutral 15 becomes 3.286.
@@ -143,7 +174,7 @@ function mapUltimate2cBluetooth(p) {
     if (directions[direction]) pressed.push(...directions[direction]);
   }
   return {name: "8BitDo Ultimate 2C Wireless Controller", category: windowsCategory(p, "D-input"), extended: true, raw: false,
-    pressed, lx: axis(0), ly: -axis(1), rx: axis(2), ry: -axis(5), lt, rt, analogTriggers: false};
+    pressed, lx: axis(0), ly: -axis(1), rx: axis(2), ry: -axis(5), lt, rt, analogTriggers: !!analog};
 }
 async function windowsBatteryStatus() {
   const p = windowsPad();
@@ -236,7 +267,7 @@ function windowsTick() {
     window.u2cDiagnostics({ type: "state", connected: false, error: "Connect the controller and press a button while this page is focused." });
     return;
   }
-  if (windowsBatteryPad !== p.id) {
+  if (windowsView === "diagnostics" && windowsBatteryPad !== p.id) {
     windowsBattery = { level: -1, state: "unknown" };
     windowsBatteryStatus();
   }
@@ -261,7 +292,7 @@ function windowsTick() {
     }
   }
   if (windowsStockStreamPad && windowsStockStreamPad !== p.id) { stopWindowsStockStream(); windowsStockState = null; windowsStockPad = null; }
-  if (windowsPads().length === 1 && (knownStockPad(p) || mapped || /D-input/.test(e.category))) {
+  if (windowsView === "diagnostics" && windowsPads().length === 1 && (knownStockPad(p) || mapped || /D-input/.test(e.category))) {
     const native = windowsStockPad === p.id && Date.now()-windowsStockAt <= 3000 ? windowsStockState : null;
     // Keep browser sticks/buttons at the UI frame rate. HID supplements only
     // the controls that the browser cannot expose reliably.
@@ -270,6 +301,8 @@ function windowsTick() {
       e.pressed.push(...native.pressed.filter(name => name === "L4" || name === "R4"));
     }
     streamWindowsStock(p);
+  } else if (windowsView !== "diagnostics") {
+    stopWindowsStockStream(); windowsStockState = null; windowsStockPad = null;
   } else {
     stopWindowsStockStream(); windowsStockState = null; windowsStockPad = null;
   }
@@ -282,15 +315,33 @@ const windowsBridge = { postMessage(m) {
       .then(async response => { const result = await response.json(); window.u2cDiagnostics({ type: "result", op: "ring", id: m.id, ok: response.ok && !!result.ok, error: result.error }); })
       .catch(error => window.u2cDiagnostics({ type: "result", op: "ring", id: m.id, ok: false, error: String(error) }));
   } else if (m.op === "start") {
+    windowsView = m.view === "settings" ? "settings" : "diagnostics";
+    if (windowsView === "settings") {
+      stopWindowsStockStream();
+      setWindowsStockSuspended(true);
+      windowsStockState = null; windowsStockPad = null;
+    }
     clearInterval(windowsPoll);
     windowsPoll = setInterval(windowsTick, 16);
     clearInterval(windowsRumblePoll);
-    windowsRumblePoll = setInterval(windowsRumbleStatus, 1000);
-    windowsRumbleStatus();
+    if (windowsView === "diagnostics") {
+      setWindowsStockSuspended(false);
+      windowsRumblePoll = setInterval(windowsRumbleStatus, 1000);
+      windowsRumbleStatus();
+    }
     clearInterval(windowsBatteryPoll);
-    windowsBatteryPoll = setInterval(windowsBatteryStatus, 60000);
+    if (windowsView === "diagnostics") windowsBatteryPoll = setInterval(windowsBatteryStatus, 60000);
     windowsTick();
+  } else if (m.op === "pause") {
+    windowsView = "settings";
+    stopWindowsStockStream();
+    setWindowsStockSuspended(true);
+    clearInterval(windowsPoll); windowsPoll = null;
+    clearInterval(windowsBatteryPoll); windowsBatteryPoll = null;
+    clearInterval(windowsRumblePoll); windowsRumblePoll = null;
+    windowsStockState = null; windowsStockPad = null;
   } else if (m.op === "stop") {
+    windowsView = "diagnostics";
     stopWindowsStockStream();
     clearInterval(windowsPoll); windowsPoll = null;
     windowsStockState = null; windowsStockPad = null;

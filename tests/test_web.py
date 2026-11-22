@@ -600,6 +600,20 @@ class WebTest(unittest.TestCase):
         self.assertEqual(got["values"]["dz_l"], 14)
         self.assertIn({"name": "vibration", "low": 0, "high": 100, "default": 100, "choices": [0, 25, 50, 75, 100]}, got["fields"])
 
+    def test_usb_dinput_settings_read_change_save_and_reset(self):
+        """USB DInput uses the existing 0x81/0x02 controller settings channel."""
+        dev = self.settings_device(mode="cable_dinput")
+        code, body = self.call("GET", "/api/settings")
+        self.assertEqual(code, 200)
+        self.assertTrue(json.loads(body)["available"])
+        self.assertEqual(self.call("POST", "/api/settings", {"set": {"dz_l": 7}})[0], 200)
+        self.assertEqual(dev.fields[0], 7)
+        from u2c_customfw import settings
+        values = dict({f.name: f.default for f in settings.FIELDS}, dz_l=7)
+        self.assertEqual(self.call("POST", "/api/settings", {"save": True, "values": values})[0], 200)
+        self.assertEqual(settings.parse(dev.flash[settings.SECTOR:settings.SECTOR + settings.SIZE]), values)
+        self.assertEqual(self.call("POST", "/api/settings", {"reset": True})[0], 200)
+
     def test_settings_change_and_save(self):
         dev = self.settings_device()
         self.assertEqual(self.call("POST", "/api/settings", {"set": {"dz_l": 7}})[0], 200)

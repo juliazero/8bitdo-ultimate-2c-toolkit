@@ -71,6 +71,23 @@ class StockGamepadTest(unittest.TestCase):
             self.assertEqual(helper.snapshot(), {'available': False, 'connected': False})
             device.close.assert_called_once()
 
+    def test_suspend_closes_handle_and_prevents_reopen_until_resumed(self):
+        hid, device = Mock(), Mock()
+        hid.enumerate.return_value = [dict(path=b'usb-pad', usage_page=1, usage=5, bus_type=1, product_id=0x301B)]
+        hid.device.return_value = device
+        device.read.return_value = []
+        helper = stock.StockGamepad()
+        with patch.object(stock, '_hid', return_value=hid):
+            helper.snapshot()
+            self.assertIs(helper.device, device)
+            helper.suspend(True)
+            device.close.assert_called_once()
+            self.assertEqual(helper.snapshot(), {"available": False, "connected": False})
+            self.assertEqual(hid.device.call_count, 1, "no reopen while Settings is active")
+            helper.suspend(False)
+            helper.snapshot()
+            self.assertEqual(hid.device.call_count, 2, "Diagnostics can reopen after Settings")
+
     def test_multiple_controllers_do_not_select_arbitrarily(self):
         hid = Mock()
         hid.enumerate.return_value = [dict(path=b'pad', usage_page=1, usage=5, bus_type=2)] * 2

@@ -48,7 +48,7 @@ def check(stock, keys=None):
         def __init__(self, battery_mv=3700, battery_percent=50):
             self.writes=[]
             super().__init__(bytes(flash))
-            self.analog=0x80; self.edges=[]; self.delays=[]; self.vendor_calls=[]; self.slider_calls=0; self.saves=[]; self.reply_attempts=[]; self.reply_busy=0; self.battery_replies=[]
+            self.analog=0x80; self.edges=[]; self.delays=[]; self.vendor_calls=[]; self.slider_calls=0; self.saves=[]; self.reply_attempts=[]; self.reply_busy=0; self.battery_replies=[]; self.usb_buzzes=[]
             self.seed(proto.USB,2,1);self.seed(0x800518,1,1)
             self.seed(0x843424,battery_mv)
             self.seed(0x843415,battery_percent,1)
@@ -88,6 +88,8 @@ def check(stock, keys=None):
                 self.delays.append(r[0]);return True
             if pc in (0xf56c,0xf594):
                 assert r[0]==module.PACKET;self.vendor_calls.append(pc);return True
+            if pc==0xfa68:
+                self.usb_buzzes.append(tuple(r[:3]));return True
             if pc==0xd024:self.slider_calls+=1;return True
             if pc==0xd538:
                 self.saves.append(self.rd8(0x843915));return True
@@ -152,9 +154,11 @@ def check(stock, keys=None):
     cpu.poll(12100,0);cpu.poll(12200,H|X);cpu.poll(15200,H|X)
     assert cpu.rd8(proto.MODE)==0 and cpu.descriptor()==(0x028e045e if keys and 'cable_360' in keys else 0x310a2dc8)
     assert cpu.edges==[False,True,False,True] and cpu.delays==[600000 if keys else 200000]*2
+    assert cpu.usb_buzzes == [(70,70,12)]*2, 'exactly one local cue per actual USB mode change'
     assert cpu.rd8(0x843915)==0  # saved USB selection unchanged
     cpu.poll(15300,0);cpu.poll(15400,H|X);cpu.poll(18400,H|X)
     assert len(cpu.edges)==4  # already XInput: stock setter avoids re-enumeration
+    assert len(cpu.usb_buzzes)==2  # no cue for a redundant gesture
     assert cpu.slider_calls==11
     print('ok: 3-second hold, both real mode setters, real 200ms re-enumeration, descriptors, one-shot, release, save-on-change')
     for buttons in (B,X,H,H|B|X,0):
@@ -199,9 +203,18 @@ def check(stock, keys=None):
             assert c.rd(proto.STATE+16,4)&1, "update command must still lock switching"
         print('ok: cable battery reply on both vendor routes; update command remains on stock handler')
     for packet in ('81 05 c1 00 00','81 05 02 00 00','81 05 03 00 00','81 05 04 00 00',
-                   '81 05 0b 00 00','81 05 c4 00 00','81 05 00 51 00','81 05 00 55 00','81 00 66 aa 64'):
+                   '81 05 0b 00 00','81 05 c4 00 00','81 05 00 51 00','81 05 00 60 00','81 00 66 aa 64'):
         c=CPU();c.packet(0,bytes.fromhex(packet));c.poll(10000,H|B);c.poll(20000,H|B)
         assert not c.edges and c.rd(proto.STATE+16,4)&1==1
+    for route in ('vendor_a','vendor_b'):
+        c=CPU()
+        for command in ('81 05 00 54 00 0e', '81 05 00 55', '81 05 00 56',
+                        '81 05 00 57 00 00', '81 05 00 58 01', '81 05 00 5a', '81 05 00 52 02', '81 05 00 53'):
+            c.packet(0,bytes.fromhex(command),route)
+            assert c.rd(proto.STATE+16,4)&1==0,command
+        c.poll(2000,H|B);c.poll(5000,H|B)
+        assert c.rd8(proto.MODE)==1 and c.usb_buzzes==[(70,70,12)]
+    print('ok: Settings reads/save/reset no longer permanently lock USB switching')
     c=CPU();c.packet(0,bytes.fromhex('81 05 00 21 01'));assert c.rd(proto.STATE+16,4)&1==0
     c.poll(2000,H|B);c.poll(5000,H|B);assert c.rd8(proto.MODE)==1
     for route in ('vendor_a','vendor_b'):
@@ -209,7 +222,7 @@ def check(stock, keys=None):
         assert c.rd(proto.STATE+16,4)&1==0
         c.poll(2000,H|B);c.poll(5000,H|B);assert c.rd8(proto.MODE)==1
     c=CPU();c.packet(0,bytes.fromhex('81 11 04 09'));assert c.rd(proto.STATE+16,4)&1==1
-    print('ok: unknown/write/update commands lock until reset; read-session open remains allowed')
+    print('ok: unknown/firmware-write/update commands lock until reset; Settings remain allowed')
     c=CPU();c.poll(267000,H|B);c.poll(270000,H|B);assert c.rd8(proto.MODE)==1
     c=CPU();c.poll(0,H|B);c.poll(2000,H|B,0,0);c.poll(3000,H|B);c.poll(5999,H|B)
     assert not c.edges;c.poll(6000,H|B);assert c.rd8(proto.MODE)==1

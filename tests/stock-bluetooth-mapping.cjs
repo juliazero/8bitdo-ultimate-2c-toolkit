@@ -24,6 +24,17 @@ assert.equal(result.raw, false);
 assert.equal(result.name, '8BitDo Ultimate 2C Wireless Controller');
 assert.equal(result.lt, 0);
 assert.equal(result.rt, 0);
+// The native stream must stay closed in Settings, but standard DInput
+// Gas/Brake axes should still provide analog live trigger travel.
+vm.runInContext('windowsView = "settings"', context);
+pad = neutral();
+assert.deepEqual([map().lt, map().rt], [0,0]);
+pad.axes[3] = 0; pad.axes[4] = .5; // Gas=half, Brake=three quarters.
+const settingsAnalog = map();
+assert.deepEqual([settingsAnalog.lt, settingsAnalog.rt], [.75,.5]);
+assert.equal(settingsAnalog.analogTriggers, true);
+vm.runInContext('windowsView = "diagnostics"', context);
+pad = neutral();
 assert.equal(result.pressed.length, 0, 'out-of-range neutral hat must not press the D-pad');
 for (const [index, name] of [[0,'A'],[1,'B'],[2,'L4'],[5,'R4'],[3,'X'],[4,'Y'],[6,'LB'],[7,'RB'],[8,'LT'],[9,'RT'],[10,'View'],[11,'Menu'],[12,'Home'],[13,'L3'],[14,'R3']]) {
   pad = neutral();

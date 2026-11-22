@@ -26,15 +26,31 @@ stock 16 MHz 32-bit timer, including wrap. The prototype polls on the existing
 ## Operation guards
 
 Both existing vendor callback routes remain called. Before them, the prototype
-records packets beginning with vendor report ID `81`. Reads, the `00 21` session opener and the exact motor-test header `81 11 04 08` reset
-the hold and enforce two seconds without traffic before a fresh gesture.
-The exact battery status command `81 05 00 5b` is now handled before the guard: it neither locks switching nor resets the hold. The previous battery-enabled build accidentally passed this command through the unknown-command lock.
-Any other vendor operation, including unknown command families, locks switching until
-firmware restart. This includes write unlock, writes, update-mode entry and
-settings changes. The prototype intentionally has no command to clear that lock.
-This is stricter than the eventual UI: for example, changing ring brightness
-also locks switching until restart. Arbitrary unknown non-vendor packets do not
-clear an already acquired lock.
+monitors vendor report ID `81` traffic. Ordinary read requests, the `00 21`
+session opener, Home-ring commands (`81 05 00 52` and `53`), Settings commands
+(`81 05 00 54` through `5a`), and the exact motor-test header `81 11 04 08`
+reset the mode-switch hold and impose a two-second quiet interval. The exact
+battery read `81 05 00 5b` is handled before the guard and does not delay
+switching or acquire a lock.
+
+Unknown or potentially destructive vendor operations, including flash write
+unlock, firmware writes and entering update mode, still permanently lock USB
+mode switching until the controller restarts. The prototype intentionally has
+no command for clearing this lock. Unknown non-vendor traffic does not clear
+an already acquired lock.
+
+After an actual USB choice change and successful save of its mode bit,
+firmware **arms** a one-shot `motor_set(70,70,12)` cue (~120 ms). It does
+not vibrate at mode selection or USB detach: the 100 ms main-loop helper
+waits for the USB state to become configured (`0x8434d8 == 2`) *after*
+observing the disconnected/unconfigured state. When the 600 ms stock
+pull-up cycle occurs entirely between main-loop polls, it may be missed;
+in that case the helper requires both configured USB and at least one second
+since the mode change before buzzing. The second condition prevents an early
+cue on the old USB identity. Actual host enumeration timing still requires
+physical testing. No cue occurs for a redundant same-mode gesture or during
+Bluetooth / 2.4 GHz connection or startup. Wireless connection-vibration
+paths are unchanged.
 
 The original settings-save function is called only for a changed choice. No application-bank write, reboot or power-off function is called by the gesture. This is a bounded first prototype, not a verified hardware
 safety guarantee. Peripheral USB timing and host re-enumeration still require
@@ -42,13 +58,20 @@ physical testing; the interpreter has no USB host, radio or charging model.
 
 ## Placement and compatibility
 
-The integrated 572-byte code sits at `0x9a70`, in the unused tail of the dead
+The main 572-byte code sits at `0x9a70`, in the unused tail of the dead
 soft-float area already reclaimed by Battery log (`0x9964..0x9cac`). The full
-existing Battery log payload stays byte-for-byte unchanged; No bytes remain
-after the new code in this slot. No application-area expansion or use of `0x19000` is needed.
+existing Battery log payload stays byte-for-byte unchanged; no bytes remain
+after this code in the slot. The 88-byte deferred-haptic helper occupies
+`0x198d0..0x19928`, inside bank A's existing erased extension and separately
+from `bt_modes` (ending at `0x198c4`), the RF battery helper at `0x19a00`,
+and Steam's DInput repacker at `0x19f80`. No USB haptic instructions are
+inserted in the Bluetooth or 2.4 GHz connection callbacks.
 
 The 20-byte state sits at `0x84165c..0x841670`, between the 28-byte Home ring
-state and Battery log state at `0x841670`. Settings starts at `0x841680`.
+state and Battery log state at `0x841670`. The helper uses only two additional
+bits in the existing 32-bit flags at state +16 to track pending USB vibration
+and whether an unconfigured state was observed; state +4 holds the last mode
+change time while vibration is pending. Settings starts at `0x841680`.
 A C compile-time assertion prevents Home ring state from growing into this gap.
 The existing ring recipe initializes the state via its zeroed RAM-code region,
 so a Home ring level is required (the WebUI includes normal automatically).
@@ -151,3 +174,23 @@ attempts (16 ms waiting). The original packet and length are preserved. Success
 returns immediately; unconfigured USB or XInput never waits. No write/erase
 command is retried. Instruction tests cover immediate success, busy intervals,
 a permanently busy endpoint and disconnect/XInput gates.
+
+## Settings mode-switch regression fix
+
+Older `usb_dinput` firmware treated the normal Settings commands (`0x54`–`0x5a`),
+including the initial `settings_reload(0x5a)`, as permanent firmware-write
+operations. The USB switching gesture then could not work until controller
+restart. The corrected firmware classifies these commands as ordinary runtime
+settings operations, along with Home-ring commands (`0x52`, `0x53`). All still
+impose the normal two-second quiet interval, whereas firmware unlock/write/update
+commands retain the permanent safety lock.
+
+The legacy `usbmode` blob and three original callsite hook encodings are kept
+as accepted historical versions for firmware recognition. Updating the existing
+`usb_dinput` checkbox installs the corrected blob; **a controller firmware
+flash is necessary** to fix a controller already running the previous patch.
+The app also avoids the write-unprotect session fallback on Settings endpoints,
+preventing a temporary USB DInput read failure from engaging the write lock.
+
+Instruction-level tests check both USB directions, motor cues, retained vendor
+routes and old-firmware recognition. Physical hardware validation is pending.

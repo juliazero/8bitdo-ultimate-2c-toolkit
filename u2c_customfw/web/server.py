@@ -419,7 +419,7 @@ def make_server(store: Path, port: int = 0):
 
             self.by_cable(work)
 
-        def by_cable(self, work):
+        def by_cable(self, work, *, allow_unprotect=True):
             """Runs work(channel) on the one controller connected by cable, holding the device, and sends its answer."""
             if not runner.claim():
                 return self.send(409, json.dumps({"error": "Another task is running."}))
@@ -429,7 +429,7 @@ def make_server(store: Path, port: int = 0):
                     return self.send(409, json.dumps({"error": "Connect the controller by cable, without other controllers."}))
                 ch = cli.open_channel(ours[0].info, 0x81)
                 try:
-                    if app.open_session(ch) is None:
+                    if app.open_session(ch, allow_unprotect=allow_unprotect) is None:
                         raise OpError(settings_ops.NO_ANSWER)
                     probe.check_not_dongle(ch)
                     answer = work(ch)
@@ -462,7 +462,7 @@ def make_server(store: Path, port: int = 0):
                     return answer(note="Connect the controller by cable to change these settings.")
                 ch = cli.open_channel(ours[0].info, 0x81)
                 try:
-                    if app.open_session(ch) is None:
+                    if app.open_session(ch, allow_unprotect=False) is None:
                         return answer(note=settings_ops.NO_ANSWER)
                     probe.check_not_dongle(ch)
                     if not settings_ops.installed(ch):
@@ -512,7 +512,7 @@ def make_server(store: Path, port: int = 0):
                 settings_ops.still_there(ch)
                 return {"ok": True}
 
-            self.by_cable(work)
+            self.by_cable(work, allow_unprotect=False)
 
         def firmware_report(self):
             found = cli.find()
@@ -641,6 +641,13 @@ def make_server(store: Path, port: int = 0):
                     return self.send(200, json.dumps({"ok": True}))
                 except OSError as exc:
                     return self.send(422, json.dumps({"error": f"Could not open the folder: {exc}"}))
+            if route == "/api/windows-stock-control":
+                if sys.platform != "win32":
+                    return self.send(404, json.dumps({"error": "Windows only"}))
+                if type(req.get("suspended")) is not bool:
+                    return self.send(400, json.dumps({"error": "Expected a boolean suspended"}))
+                WINDOWS_STOCK_GAMEPAD.suspend(req["suspended"])
+                return self.send(200, json.dumps({"ok": True}))
             if route == "/api/bluetooth-ring/read":
                 if sys.platform != "win32":
                     return self.send(404, json.dumps({"error": "Windows only"}))

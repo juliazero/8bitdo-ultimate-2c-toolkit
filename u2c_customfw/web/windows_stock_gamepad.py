@@ -59,6 +59,7 @@ class StockGamepad:
         self.product = 0x301B
         self.usb = False
         self.bt_layout = False
+        self.suspended = False
 
     def _close(self):
         if self.device is not None:
@@ -70,8 +71,22 @@ class StockGamepad:
         with self.lock:
             self._close()
 
+    def suspend(self, enabled=True):
+        """Immediately release the native HID input handle before switching USB modes.
+
+        The browser aborting an SSE fetch alone does not guarantee its server
+        thread has observed the disconnect. A suspended snapshot cannot reopen
+        the handle until Diagnostics explicitly enables it again.
+        """
+        with self.lock:
+            self.suspended = bool(enabled)
+            if self.suspended:
+                self._close()
+
     def snapshot(self):
         with self.lock:
+            if self.suspended:
+                return {"available": False, "connected": False}
             try:
                 hid = _hid()
                 devices = [d for d in hid.enumerate(0x2DC8, 0)

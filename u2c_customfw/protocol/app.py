@@ -97,7 +97,7 @@ def set_dead_zone(ch, off: bool) -> None:
     _command(ch, 0x58, 1 if off else 0)
 
 
-def open_session(ch) -> str | None:
+def open_session(ch, *, allow_unprotect: bool = True) -> str | None:
     """Make reads work. Returns 'cold', 'session' or 'unprotect' (what had to be sent), or None."""
     if read(ch, 0x10000, 16, tries=2) is not None:
         return "cold"
@@ -106,6 +106,11 @@ def open_session(ch) -> str | None:
         time.sleep(0.02)
         if read(ch, 0x10000, 16, tries=2) is not None:
             return "session"
+    if not allow_unprotect:
+        # Settings must never accidentally unlock controller firmware flash
+        # after a transient DInput read timeout. This would permanently arm
+        # the USB mode-switch firmware's update-operation safety lock.
+        return None
     ch.xfer(WRITE_UNPROTECT, 0.8)
     time.sleep(0.02)
     if read(ch, 0x10000, 16, tries=3) is not None:

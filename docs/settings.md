@@ -23,3 +23,10 @@ Home ring shortcut: hold physical L4 and R4 together continuously for 5 seconds.
 A short tap does nothing. Each hold advances one level; release either paddle
 before another hold. The chosen level is saved after the existing 3-second delay.
 Reinstall the tweaks to update controllers with the previous immediate shortcut.
+
+USB DInput Settings uses the same vendor protocol as wired XInput. The USB mode
+switch gesture (Home+B for DInput, Home+X for XInput) is compatible with Settings
+commands after updating the `usb_dinput` firmware tweak; allow two seconds
+without Settings traffic before holding the gesture for three seconds. Firmware
+writing/unlock commands still lock switching until restart. A brief vibration
+confirms an actual USB mode change; wireless connections keep their own cues.

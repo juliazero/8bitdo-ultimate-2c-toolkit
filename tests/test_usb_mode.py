@@ -2,6 +2,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from tools import build_usb_mode_prototype as usb
 from tools.build_usb_mode_prototype import integrated
 from u2c_customfw.firmware import image,recipes
 from u2c_customfw.simulation import installed
@@ -26,7 +27,15 @@ class USBModeImageTest(unittest.TestCase):
                     built=recipes.build(stock,keys)
                     self.assertEqual(set(recipes.identify(built).recipes),set(keys))
                     without=recipes.build(stock,[ring,*extra])
-                    self.assertEqual(built[0x18400-image.BASE:],without[0x18400-image.BASE:])
+                    # usb_dinput owns one explicit post-enumeration haptic
+                    # code cave beyond the old ring slot; no other extension
+                    # sectors may differ.
+                    left=bytearray(built[0x18400-image.BASE:])
+                    right=bytearray(without[0x18400-image.BASE:])
+                    start=usb.HAPTIC_ENTRY-0x18400
+                    stop=start+len((recipes.BLOBS/'usb-haptic-ready.bin').read_bytes())
+                    left[start:stop]=right[start:stop]
+                    self.assertEqual(left,right)
                     self.assertEqual(set(recipes.identify(without).recipes),{ring,*extra})
 
     def test_usb_pid_is_wired_only_and_previous_payload_is_upgradable(self):

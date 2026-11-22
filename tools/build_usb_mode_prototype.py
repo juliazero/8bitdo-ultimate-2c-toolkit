@@ -12,6 +12,8 @@ STATE, STATE_IMAGE, STATE_SIZE = 0x84165c, 0x765c, 20
 RAW, TIMER, USB, MODE = 0x84344c, 0x800740, 0x8434d8, 0x842e38
 HOME, B, X = 1 << 17, 1 << 12, 1 << 4
 HOLD, QUIET = 48_000_000, 32_000_000  # 3 s / 2 s on the stock 16 MHz tick
+HAPTIC_ENTRY, HAPTIC_FALLBACK = 0x198D0, 16_000_000  # 1 s since mode change
+HAPTIC_STOP = 3_200_000  # explicit motor stop after 200 ms; 16 MHz timer
 MAP = [15,14,10,11,0,1,5,4,2,3,7,6,13,12,8,9]
 
 
@@ -73,11 +75,11 @@ class Code:
 def build(entry=ENTRY, vendor_targets=(0xf56c,0xf594)):
     c = Code(entry)
     # Main-loop 100 ms call, after the stock slider task; independent of a484.
-    c.label('main'); c.op(0xb510); c.call(0xd024); c.call('poll'); c.op(0xbd10)
+    c.label('main'); c.op(0xb510); c.call(0xd024); c.call(HAPTIC_ENTRY); c.op(0xbd10)
     c.label('poll'); c.op(0xb570)  # preserve r4-r6/lr
     c.literal(4, STATE); c.literal(6, TIMER); c.load(6, 6)
     c.literal(0, USB); c.byte(0, 0); c.cmp(0, 2); c.branch('reset', 1)
-    c.literal(0, 0x800518); c.byte(0, 0); c.mov(1, 1); c.op(0x4208); c.branch('reset', 0)
+    c.literal(0, 0x800518); c.byte(0, 0); c.op(0x07c0); c.branch('reset', 0)  # lsls r0,#31 checks power bit 0
     c.load(0, 4, 16); c.mov(1, 1); c.op(0x4208); c.branch('reset', 1)
     c.mov(1, 2); c.op(0x4208); c.branch('buttons', 0)
     c.load(1, 4, 12); c.op(0x1a70)  # r0 = timer - last_vendor
@@ -102,21 +104,33 @@ def build(entry=ENTRY, vendor_targets=(0xf56c,0xf594)):
     c.mov(1, 1); c.op(0x4388)  # clear only saved USB bit, preserve Bluetooth bits
     c.literal(2, MODE); c.byte(1, 2); c.op(0x4308)
     c.byte(1, 5, 5); c.op(0x4288); c.branch('done', 0)
-    c.op(0x7168); c.call(0xd538); c.branch('done')  # strb r0,[r5,#5]; stock journal save
-    c.label('not_chord'); c.mov(0, 0); c.store(0, 4); c.branch('done')
+    c.op(0x7168); c.call(0xd538)  # strb r0,[r5,#5]; stock journal save
+    # Arm a one-shot cue, rather than vibrating while the old USB identity
+    # is still present. The helper runs on subsequent main-loop ticks.
+    c.load(0, 4, 16); c.mov(1, 4); c.op(0x4308); c.store(0, 4, 16)
+    c.store(6, 4, 4)  # capture exact switch time, not chord start
+    c.branch('done')
+    c.label('not_chord')  # Share the reset path, preserving Home release handling.
     c.label('reset'); c.mov(0, 0); c.store(0, 4)
     c.literal(1, RAW); c.load(1, 1); c.literal(2, HOME); c.op(0x4211); c.branch('done', 1)
     c.store(0, 4, 8)
     c.label('done'); c.op(0xbd70)
     # Monitor both routes before the unmodified vendor handlers. Parameters:
     # Battery reads are handled before the activity guard: they neither lock nor delay mode switching.
-    # All other vendor traffic retains the existing update safety policy.
-    for name, stock in zip(('vendor_a','vendor_b'), vendor_targets):
-        c.label(name); c.op(0xb510); c.op(0x1c04)  # r4 = packet
-        c.call('battery_reply')
-        c.cmp(0, 0); c.branch(name + '_done', 1)
-        c.op(0x1c20); c.call('activity'); c.op(0x1c20); c.call(stock)
-        c.label(name + '_done'); c.op(0xbd10)
+    # Settings/Home-ring commands impose quiet time but no permanent lock.
+    # Other vendor traffic retains the existing update safety policy.
+    # Share the identical packet handling code between both stock vendor paths.
+    # Keep the original r0 packet pointer, the two original stock handlers,
+    # and callee-saved r4/r5 intact. This also frees room for USB switch feedback.
+    c.label('vendor_a'); c.mov(2, 0); c.branch('vendor_common')
+    c.label('vendor_b'); c.mov(2, 1)
+    c.label('vendor_common'); c.op(0xb530); c.op(0x1c04); c.op(0x1c15)  # push r4,r5,lr; r4=packet; r5=route
+    c.call('battery_reply'); c.cmp(0, 0); c.branch('vendor_done', 1)
+    c.op(0x1c20); c.call('activity'); c.op(0x1c20)
+    c.cmp(5, 0); c.branch('vendor_b_stock', 1)
+    c.call(vendor_targets[0]); c.branch('vendor_done')
+    c.label('vendor_b_stock'); c.call(vendor_targets[1])
+    c.label('vendor_done'); c.op(0xbd30)
     c.label('startup'); c.op(0xb510); c.call(0xf014)
     c.literal(0, 0x800518); c.byte(0, 0); c.mov(1, 1); c.op(0x4208); c.branch('startup_done', 0)  # never re-enumerate USB on battery
     c.literal(0, 0x843915); c.byte(0, 0); c.mov(1, 1); c.op(0x4008)
@@ -136,6 +150,11 @@ def build(entry=ENTRY, vendor_targets=(0xf56c,0xf594)):
     c.byte(0, 5, 2); c.cmp(0, 5); c.branch('activity_done', 0)
     c.cmp(0, 0); c.branch('lock', 1)
     c.byte(0, 5, 3); c.cmp(0, 0x21); c.branch('activity_done', 0)
+    # Settings and Home-ring commands (RAM changes, saved settings and reload) are not
+    # firmware/update writes. They still enforce the 2s USB quiet period.
+    # Subtracting 0x52 makes an unsigned range check (0x52..0x5A); 0x59 is
+    # reserved for the host-only Settings stack diagnostic, also safe.
+    c.op(0x3852); c.cmp(0, 8); c.branch('activity_done', 9)
     c.label('lock'); c.load(0, 4, 16); c.mov(1, 1); c.op(0x4308); c.store(0, 4, 16)
     c.label('activity_done'); c.op(0xbd30)
     # Only read replies: game input and vendor reads share D-input's IN endpoint.
@@ -179,6 +198,52 @@ def build(entry=ENTRY, vendor_targets=(0xf56c,0xf594)):
     return blob, c.labels, hooks
 
 
+def build_haptic(poll_addr):
+    """USB-only post-reenumeration cue, in free space after the BT-mode code.
+
+    Flag 0x4 means a mode changed; 0x8 means an unconfigured USB state was
+    observed after the change; 0x10 means a short haptic is active and must
+    be explicitly stopped. A newly configured USB triggers immediately.
+    If the USB stack cycles entirely inside a blocking stock mode setter and
+    no unconfigured tick can be observed, fall back to a 1-second minimum
+    post-switch delay, *still requiring configured USB state*.
+    """
+    c = Code(HAPTIC_ENTRY)
+    c.op(0xb510)  # push r4,lr
+    c.call(poll_addr)  # original 100 ms mode polling, before checking readiness
+    c.literal(4, STATE)
+    c.load(0, 4, 16)
+    # Independent stop path: USB-mode changes can suspend the stock 10-ms
+    # motor countdown. Never rely on the hold byte alone to stop the cue.
+    c.mov(1, 16); c.op(0x4208); c.branch('check_start', 0)
+    c.literal(1, TIMER); c.load(1, 1)
+    c.load(2, 4, 4); c.op(0x1a89)  # elapsed since explicit haptic start
+    c.literal(2, HAPTIC_STOP); c.op(0x4291); c.branch('done', 3)
+    c.mov(1, 16); c.op(0x4388); c.store(0, 4, 16)
+    # A nonzero hold overrides an existing motor hold in both stock firmware
+    # and the optional bt_rumble_long patch. Set BOTH strengths to zero.
+    c.mov(0, 0); c.mov(1, 0); c.mov(2, 1); c.call(0xfa68)
+    c.branch('done')
+    c.label('check_start')
+    c.mov(1, 4); c.op(0x4208); c.branch('done', 0)
+    c.literal(1, USB); c.byte(1, 1); c.cmp(1, 2); c.branch('ready', 0)
+    c.mov(1, 8); c.op(0x4308); c.store(0, 4, 16); c.branch('done')
+    c.label('ready')
+    c.mov(1, 8); c.op(0x4208); c.branch('buzz', 1)
+    c.literal(1, TIMER); c.load(1, 1)
+    c.load(2, 4, 4); c.op(0x1a89)  # elapsed = clock - mode-switch timestamp
+    c.literal(2, HAPTIC_FALLBACK); c.op(0x4291); c.branch('done', 3)
+    c.label('buzz')
+    c.mov(1, 12); c.op(0x4388)
+    c.mov(1, 16); c.op(0x4308); c.store(0, 4, 16)  # stop pending, clear start flags
+    c.literal(1, TIMER); c.load(1, 1); c.store(1, 4, 4)  # time from start of pulse
+    c.mov(0, 70); c.mov(1, 70); c.mov(2, 12); c.call(0xfa68)
+    c.label('done'); c.op(0xbd10)
+    data = c.finish()
+    assert HAPTIC_ENTRY + len(data) <= 0x19A00, (len(data), 'haptic code overlaps 2.4 GHz battery code')
+    return data
+
+
 def integrated(blobs):
     """Preserve the entire Battery log payload and chain existing ring vendors."""
     blobs = Path(blobs)
@@ -194,7 +259,7 @@ def integrated(blobs):
     assert len(log) <= 0x9a70 - 0x9964
     area = bytearray(log.ljust(0x9cac - 0x9964, b'\0'))
     area[0x9a70 - 0x9964:0x9a70 - 0x9964 + len(code)] = code
-    results = {'usbmode.bin':bytes(area)}
+    results = {'usbmode.bin':bytes(area), 'usb-haptic-ready.bin':build_haptic(labels['poll'])}
     for address, name in ((0xe414,'usbread.bin'),(0xa414,'usbstart.bin'),(0xa488,'usbhook.bin'), (0xf83c,'usbvendora.bin'), (0xf842,'usbvendorb.bin')):
         results[name] = hooks[address][1]
     return results, code, labels

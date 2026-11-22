@@ -92,3 +92,15 @@ The Switch 2 pairing/GATT experiment in `switch2-pairing.c` and its journal
 in `switch2-bonds.c`, plus `switch2-input.c` `switch2-security.c` and `switch2-memory.c`, are offline-only and are
 not part of the installed tweaks. See `docs/switch2-prototype.md` for its TC32
 build/check commands and the remaining GATT, persistence and radio work.
+
+The USB-mode Settings switch regression is fixed in the existing `usb_dinput` blob: `0x52..0x5a` are permitted after the 2-second quiet interval, update writes remain locked, and only an actual USB mode change calls `motor_set(70,70,12)`. The previous binary and three changed hooks remain recognized for upgrade.
+
+### USB haptic duration safety
+
+The USB-only post-enumeration cue now explicitly clears the motor strengths after
+about 200 ms with `motor_set(0,0,1)`. The original nominal hold of 12 units
+(120 ms) was not sufficient to guarantee a short pulse on the physical
+controller. The `usb_dinput` helper records its start timestamp and sets an
+independent one-shot pending-stop flag, without changing Bluetooth or dongle
+haptic behavior. Previous 88-byte USB reconnect haptic payloads are recognized
+for upgrade. Hardware timing of the revised stop still requires validation.
