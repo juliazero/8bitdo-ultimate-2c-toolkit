@@ -285,6 +285,19 @@ def _make() -> dict[str, Recipe]:
             Edit(0xB5C0, _blob("hpctb.bin")),                    # ... to the call that now gives the voltage to battery_pct
             Edit(0xB62C, _u32(3300)),                            # 1 % without smoothing only below 3300 mV, not below 3499
         )),
+        # Experimental: a trailer only, leaving stock input bytes and checksum
+        # untouched. RF payload length is extended from 20/22 to 28/30 bytes.
+        # This may be incompatible with the receiver! Check 2.4GHz connection
+        # and be prepared to restore controller firmware by USB.
+        Recipe("rf_battery_tx", "Experimental 2.4 GHz battery telemetry", (), (
+            Edit(0xA350, _blob("rf-battery-hook.bin")),
+            Edit(0x19A00, _blob("rf-battery.bin")),
+            Edit(0xDD82, bytes((0x1d,))),  # packet size 21 -> 29
+            Edit(0xDD86, bytes((0x1c,))),  # payload size 20 -> 28
+            Edit(0xDD92, bytes((0x1f,))),  # extended packet size 23 -> 31
+            Edit(0xDD96, bytes((0x1e,))),  # extended payload size 22 -> 30
+            Edit(0xDDC0, bytes((0x1c,))),  # copy 28, not 20, bytes from 0x843980
+        )),
         Recipe("ble_interval", "Bluetooth connection request of 12.5 ms", (), (
             Edit(0xA0DE, bytes.fromhex("0aa00aa100a2c8a3"), superseded_by="ble_fast"),  # min = max 12.5 ms, latency 0, timeout 2 s, instead of 7.5 ms and latency 59
         )),

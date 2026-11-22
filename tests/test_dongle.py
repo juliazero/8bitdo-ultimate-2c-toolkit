@@ -86,6 +86,16 @@ class DongleFirmwareTest(unittest.TestCase):
         calls = [bl(code + i, blob[i:i + 4]) for i in range(0, len(blob) - 3, 2) if blob[i + 1] >> 3 == 0x12 and blob[i + 3] >> 3 == 0x13]
         self.assertEqual(sorted(calls), [0xDC9C, 0xDDF8, 0xDE28])   # dongle.s assembled for this address: re-enumerate, idle, X-input
 
+    def test_rf_diagnostic_works_with_dinput_and_xbox_tweaks(self):
+        for chosen in (("dongle_rf_read",), ("dongle_dinput", "dongle_rf_read"),
+                       ("dongle_360", "dongle_rf_read"),
+                       ("dongle_360", "dongle_dinput", "dongle_rf_read")):
+            bank = made(STOCK, *chosen)
+            self.assertEqual(dongle.state(bank, **K), (True, tuple(k for k in dongle.TWEAKS if k in chosen)))
+            if "dongle_dinput" in chosen:
+                self.assertEqual(bank[0xff48-dongle.BASE:0xff84-dongle.BASE], DINPUT[0xff48-dongle.BASE:0xff84-dongle.BASE])
+            self.assertEqual(bank[0xff88-dongle.BASE:0xff88-dongle.BASE+len(dongle.RF_READ)], dongle.RF_READ)
+
     def test_other_firmware_gives_the_version_of_its_record(self):
         self.assertEqual(dongle.read_firmware(SimApp(flash(rnd.randbytes(dongle.SIZE), 0x68)), **K), dongle.DongleFirmware(False, 1.04, ()))
 
@@ -317,7 +327,7 @@ class DongleCliTest(DongleWriteTest):
         self.assertIn("The dongle has firmware 1.03 with Xbox 360 controller over 2.4 GHz and D-input mode with B + Home.", said[-1])
         with self.assertRaises(cli.Exit) as e:
             self.run_cmd(cli.cmd_patch, w, tweaks="dongle_dinputt", write=True)
-        self.assertEqual(e.exception.msg, "The dongle's tweaks are dongle_360, dongle_dinput. Nothing was written.")
+        self.assertEqual(e.exception.msg, "The dongle's tweaks are dongle_360, dongle_dinput, dongle_rf_tail, dongle_rf_read. Nothing was written.")
         self.assertEqual(bytes(w.flash[dongle.BASE:dongle.END]), BOTH)
 
     def test_names_are_installed_and_checked(self):

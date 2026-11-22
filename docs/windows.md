@@ -153,3 +153,33 @@ live level once on entry and provides **Read Ring Level** for changes made on
 the controller. A Bluetooth save request is not an acknowledgement of a flash
 write; power-cycle the controller to verify persistence. This feature does not
 use the Nintendo Y profile, nor does it add support for the 2.4 GHz receiver.
+
+## Dongle 2.4 GHz XInput battery interface investigation
+
+The dongle v1.03 **already advertises three USB interfaces in XInput mode**.
+Its configuration descriptor at firmware address `0xf228` (106 bytes) contains
+interface 0 (`ff/5d/01`, Xbox 360), interface 1 (`03/01/01`, HID), and
+interface 2 (`03/00/00`, HID) with interrupt IN `0x83` and OUT `0x06`.
+The HID report descriptor for interface 2 is 33 bytes. These are properties of
+the firmware image, not evidence of access through the installed Windows driver.
+
+On Windows, the Xbox controller driver can bind to the whole device and hide
+interface 2 from HIDAPI. **Do not replace XUSB with WinUSB, Zadig or another
+driver** merely to read battery data; that could disable gamepad input and
+rumble. Before making any experimental USB descriptor tweak, capture the actual
+interface/driver topology in the working XInput profile:
+
+```powershell
+python -m tools.dongle_xinput_interfaces --output xinput-interfaces.json
+```
+
+This diagnostic **does not** send USB commands, alter device drivers or write
+firmware. It lists HIDAPI paths and relevant Windows PnP device instances,
+including parent, service and compatible IDs. A report with no vendor HID path
+indicates that the current HID transport cannot access the battery packet;
+it does not mean the dongle firmware stopped receiving telemetry.
+
+In DInput 2.4 GHz, the existing read-only RF battery path already works. The
+Toolkit's scheduled battery polling is still 60 seconds; the XInput feature
+remains unavailable until a device interface can be safely opened without
+interfering with XUSB.

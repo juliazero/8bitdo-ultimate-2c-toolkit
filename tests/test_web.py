@@ -60,7 +60,7 @@ class WebTest(unittest.TestCase):
             self.assertEqual(json.loads(self.call("GET", "/api/battery")[1]), {"source": "cable", "unavailable": True})
         paired = SimApp(b"\xff" * 0x20000)   # a dongle with the controller's ID: its 0x10000 reads blank
         with mock.patch.object(cli, "find", lambda: [devices.Found(cable, "cable_360")]), mock.patch.object(cli, "open_channel", lambda i, rid: paired):
-            self.assertEqual(json.loads(self.call("GET", "/api/battery")[1]), {})
+            self.assertEqual(json.loads(self.call("GET", "/api/battery")[1]), {"source": "dongle", "unavailable": True})
             self.assertFalse([s for s in paired.sent if s.startswith("8105005b")])
         bt = transport.DeviceInfo(0x045E, 0x0B13, 0x0001, "Bluetooth Low Energy", "8BitDo Ultimate 2C (X/S)", None)
         with mock.patch.object(cli, "find", lambda: [devices.Found(bt, "bluetooth_xbox")]), \
@@ -72,6 +72,34 @@ class WebTest(unittest.TestCase):
             self.assertEqual(json.loads(self.call("GET", "/api/battery")[1]), {})   # two Xbox-ID pads: which one is unknown
         self.assertEqual(self.call("GET", "/api/battery", token=None)[0], 403)
 
+    def test_xinput_24ghz_dongle_battery_uses_vendor_hid_without_controller_command(self):
+        # XInput dongle stock ID is 2DC8:310A, the same as a USB controller.
+        # The real Windows path is MI_02 (usage page FF7A), while the XUSB
+        # gamepad stays bound to the normal Xbox driver.
+        info = transport.DeviceInfo(0x2dc8, 0x310a, 0xff7a, "USB", "8BitDo Ultimate 2C", b"MI_02", 0x114)
+        dongle_flash = SimApp(b"\xff" * 0x20000)
+        measured = {"percent": 73, "mv": 3912, "charging": False, "full": False, "sequence": 18}
+        with mock.patch.object(cli, "find", return_value=[devices.Found(info, "cable")]), \
+             mock.patch.object(cli, "open_channel", return_value=dongle_flash) as opening, \
+             mock.patch("u2c_customfw.ops.rf_battery.read", return_value=measured) as rf_read, \
+             mock.patch.object(app, "battery") as controller_battery:
+            response = json.loads(self.call("GET", "/api/battery")[1])
+        self.assertEqual(response, {"source": "dongle", **measured})
+        opening.assert_called_once_with(info, 0x81)
+        rf_read.assert_called_once_with(dongle_flash)
+        controller_battery.assert_not_called()
+
+    def test_xinput_24ghz_dongle_without_rf_tweak_is_unavailable_not_usb(self):
+        info = transport.DeviceInfo(0x2dc8, 0x310a, 0xff7a, "USB", "8BitDo Ultimate 2C", b"MI_02", 0x114)
+        dongle_flash = SimApp(b"\xff" * 0x20000)
+        with mock.patch.object(cli, "find", return_value=[devices.Found(info, "cable")]), \
+             mock.patch.object(cli, "open_channel", return_value=dongle_flash), \
+             mock.patch("u2c_customfw.ops.rf_battery.read", return_value=None), \
+             mock.patch.object(app, "battery") as controller_battery:
+            response = json.loads(self.call("GET", "/api/battery")[1])
+        self.assertEqual(response, {"source": "dongle", "unavailable": True})
+        controller_battery.assert_not_called()
+
     def test_usb_dinput_battery_uses_the_same_vendor_channel_on_all_hosts(self):
         info = transport.DeviceInfo(0x2dc8, 0x301b, 1, "USB", "controller", b"hidraw")
         dev = SimApp(controller_flash())
@@ -81,13 +109,33 @@ class WebTest(unittest.TestCase):
         self.assertEqual((data["source"], data["percent"], data["mv"]), ("cable", 77, 3870))
         opening.assert_called_once_with(info, 0x81)
 
-    def test_battery_does_not_probe_xinput_only_or_receiver(self):
-        for mode, vendor, product in (("xinput_only", 0x45e, 0x28e), ("dongle_paired", 0x2dc8, 0x301c)):
+    def test_battery_does_not_probe_xinput_only(self):
+        for mode, vendor, product in (("xinput_only", 0x45e, 0x28e), ("dongle", 0x2dc8, 0x301c)):
             info = transport.DeviceInfo(vendor, product, 1, "USB", "device", None)
             with self.subTest(mode=mode), mock.patch.object(cli, "find", return_value=[devices.Found(info, mode)]), \
                  mock.patch.object(cli, "open_channel") as opening:
                 self.assertEqual(json.loads(self.call("GET", "/api/battery")[1]), {})
                 opening.assert_not_called()
+
+    def test_dongle_rf_battery_returns_only_a_valid_trailer(self):
+        info = transport.DeviceInfo(0x2dc8, 0x301c, 1, "USB", "receiver", None)
+        from tests.test_rf_battery import RFProtocolTest
+        valid = RFProtocolTest.sample()
+        dev = mock.Mock()
+        with mock.patch.object(cli, "find", return_value=[devices.Found(info, "dongle_paired")]), \
+             mock.patch.object(cli, "open_channel", return_value=dev) as opening, \
+             mock.patch("u2c_customfw.ops.rf_battery.app.read", return_value=valid) as rf_read:
+            reading = json.loads(self.call("GET", "/api/battery")[1])
+            self.assertEqual((reading['source'], reading['percent'], reading['mv']), ('dongle', 77, 3912))
+            self.assertTrue(reading['charging'])
+        opening.assert_called_once_with(info, 0x81)
+        rf_read.assert_called_once_with(dev, 0x843108, 32, tries=1)
+        dev.close.assert_called_once()
+        with mock.patch.object(cli, "find", return_value=[devices.Found(info, "dongle_paired")]), \
+             mock.patch.object(cli, "open_channel", return_value=dev), \
+             mock.patch("u2c_customfw.ops.rf_battery.app.read", return_value=b'\xff' * 32):
+            self.assertEqual(json.loads(self.call("GET", "/api/battery")[1]),
+                             {'source': 'dongle', 'unavailable': True})
 
     def test_a_short_read_in_this_core_is_waited_for(self):
         runner = jobs.Runner(self.store)
@@ -680,7 +728,7 @@ class WebTest(unittest.TestCase):
         self.assertEqual((data["version"], data["version_from"]), (1.09, "update record"))
         self.assertEqual((data["pending"], data["boot_identity"]), (False, None))
         self.assertEqual([(t["key"], t["on"]) for t in data["tweaks"]],
-                         [("bt_xbox", True), ("bt_rumble", False), ("bt_rumble_long", False), ("bt_modes", False), ("cable_360", True), ("dim_leds", False), ("battery_alerts", False), ("settings", False), ("fixes", False), ("bt_ring_read", False), ("stick_precision", False), ("cpu_rest", False), ("usb_dinput", False), ("fast_scan", False), ("ble_fast", False), ("bt_switch2", False), ("ring", False)])
+                         [("bt_xbox", True), ("bt_rumble", False), ("bt_rumble_long", False), ("bt_modes", False), ("cable_360", True), ("dim_leds", False), ("battery_alerts", False), ("settings", False), ("fixes", False), ("bt_ring_read", False), ("stick_precision", False), ("cpu_rest", False), ("usb_dinput", False), ("rf_battery_tx", False), ("fast_scan", False), ("ble_fast", False), ("bt_switch2", False), ("ring", False)])
 
     def test_firmware_endpoint_in_update_mode_names_the_backup_restore_uses(self):
         flash = controller_flash()
@@ -725,7 +773,9 @@ class WebTest(unittest.TestCase):
         self.assertEqual(data, {"device": "dongle", "paired": False, "boot": False, "backed": False, "restore_backup": None, "stock_ok": True,
                                 "known": True, "version": 1.03,
                                 "tweaks": [{"key": "dongle_360", "title": "Xbox 360 controller over 2.4 GHz", "on": True},
-                                           {"key": "dongle_dinput", "title": "D-input mode with B + Home", "on": False}],
+                                           {"key": "dongle_dinput", "title": "D-input mode with B + Home", "on": False},
+                                           {"key": "dongle_rf_tail", "title": "Experimental RF tail capture (28 bytes)", "on": False},
+                                           {"key": "dongle_rf_read", "title": "Diagnostic RF packet read via USB", "on": False}],
                                 "names": {"dongle_360": {"label": "X-input name", "default": "8BitDo Ultimate 2C Wireless Controller", "max": 38,
                                                          "held": "8BitDo Ultimate 2C Wireless Controller"},   # installed before names
                                           "dongle_dinput": {"label": "D-input name", "default": "8BitDo Ultimate 2C Wireless Controller", "max": 36, "held": None}}})

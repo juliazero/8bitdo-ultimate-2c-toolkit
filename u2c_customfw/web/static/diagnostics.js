@@ -432,16 +432,18 @@ function batteryText(b) {  // macOS defaults to level 0 and an unknown state whe
   return `${Math.round(b.level * 100)} %${b.state === "charging" ? ", charging" : ""}`;
 }
 
-let cableBattery = null;   // the controller's own reading by cable (GET /api/battery), where macOS reports none
+let cableBattery = null;   // Own battery via controller USB or experimental dongle RF transport
 
 const byCable = () => !!st && st.devices.some((d) => d.mode === "cable" || d.mode === "cable_360" || d.mode === "cable_dinput");
+const byDongle = () => !!st && st.devices.some((d) => d.mode === "dongle_paired");
+const byBatteryTransport = () => byCable() || byDongle();
 
 const CABLE_BATTERY_INTERVAL = 60000, CABLE_BATTERY_SETTLE = 5000;
 let cableBatteryBusy = false, cableBatteryTimer = null, cableBatteryKey = "", cableBatteryGeneration = 0, cableBatteryDue = 0;
 function syncCableBattery() {
   const devices = typeof st === "undefined" ? [] : (st?.devices || []);
-  const cable = devices.filter(d => ["cable", "cable_360", "cable_dinput"].includes(d.mode));
-  const key = cable.length === 1 ? JSON.stringify(cable[0]) : "";
+  const cable = devices.filter(d => ["cable", "cable_360", "cable_dinput", "dongle_paired"].includes(d.mode));
+  const key = cable.length === 1 && devices.length === 1 ? JSON.stringify(cable[0]) : "";
   if (key !== cableBatteryKey) {
     cableBatteryKey = key; cableBatteryGeneration++;
     cableBattery = null;
@@ -463,18 +465,18 @@ async function readCableBattery() {
   try {
     const got = await api("GET", "/api/battery");
     syncCableBattery();
-    if (!got.busy && generation === cableBatteryGeneration) cableBattery = got.source === "cable" ? got : null;
+    if (!got.busy && generation === cableBatteryGeneration) cableBattery = (got.source === "cable" || got.source === "dongle") ? got : null;
   } catch (e) { return; } finally { cableBatteryBusy = false; }
   paintBattery();
 }
 
 function mountCableBatteryButton() {
-  if (!byCable() || !document.createElement) return;
+  if (!byBatteryTransport() || !document.createElement) return;
   const row = $("test-battery");
   if (!row?.parentNode?.after) return;
   const button = document.createElement("button");
-  button.className = "sec small"; button.textContent = "Read USB battery";
-  button.title = "On older USB mode-switching firmware, this query may lock switching until the controller is restarted.";
+  button.className = "sec small"; button.textContent = "Read battery";
+  button.title = "Direct USB uses controller telemetry; a 2.4 GHz dongle in either DInput or XInput uses its vendor HID channel and requires the RF battery tweaks.";
   button.onclick = readCableBattery; row.parentNode.after(button);
 }
 
@@ -483,9 +485,10 @@ function paintBattery() {
   if (!row || !testState) return;
   const own = testState.battery, c = cableBattery;
   const none = !own || own.level < 0 || (own.state === "unknown" && own.level === 0);
-  row.textContent = byCable() && !c ? "Waiting for USB battery reading…" : c && byCable() && !c.unavailable
-    ? (c.full ? "Charged (read from the controller)" : `${c.percent} %${c.charging ? ", charging" : ""} (read from the controller)`)
-    : none && c && byCable() && c.unavailable ? "Battery command unavailable in installed firmware" : batteryText(own);
+  const through = c?.source === "dongle" ? "via 2.4 GHz" : "from the controller";
+  row.textContent = byBatteryTransport() && !c ? "Waiting for battery reading…" : c && byBatteryTransport() && !c.unavailable
+    ? (c.full ? `Charged (${through})` : `${c.percent} %${c.charging ? ", charging" : ""} (${through})`)
+    : none && c && byBatteryTransport() && c.unavailable ? "Battery telemetry unavailable in this mode or firmware" : batteryText(own);
 }
 
 function vibrationText(localities) {

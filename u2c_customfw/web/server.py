@@ -274,7 +274,9 @@ def make_server(store: Path, port: int = 0):
             """Read the controller's battery from its own USB firmware command.
 
             The vendor command is optional: older controller firmware does not answer it.
-            Never send it to a paired dongle or an XInput-only interface.
+            If a paired dongle mimics the cable VID/PID in XInput, first identify
+            it through the flash signature and read its RF buffer instead.
+            Never send the controller battery command to the dongle.
             """
             if not self.auth():
                 return
@@ -286,15 +288,24 @@ def make_server(store: Path, port: int = 0):
                 try:
                     ch = cli.open_channel(cable[0].info, 0x81)
                     try:
-                        # The normal app read confirms that the channel belongs to
-                        # the controller (not a 2.4 GHz receiver mimicking its ID).
-                        probe.check_not_dongle(ch)
+                        # The direct USB controller and the stock-XInput dongle both
+                        # advertise 2DC8:310A, often with the *same* bcdDevice.
+                        # Do not assume that VID/PID identifies the controller.
+                        # The dongle has blank flash at 0x10000; use the existing
+                        # read-only identity check before choosing a battery command.
+                        try:
+                            probe.check_not_dongle(ch)
+                        except probe.PairedDongle:
+                            # On Windows the dongle's MI_02 vendor HID is accessible
+                            # beside XUSB. Reuse this exact channel and the existing
+                            # RF telemetry reader. No new command or driver needed.
+                            from ..ops.rf_battery import read as rf_battery_read
+                            reading = rf_battery_read(ch)
+                            return self.send(200, json.dumps({"source": "dongle", **(reading or {"unavailable": True})}))
                         reading = app.battery(ch)
                     finally:
                         ch.close()
                     return self.send(200, json.dumps({"source": "cable", **(reading if reading is not None else {"unavailable": True})}))
-                except probe.PairedDongle:
-                    return self.send(200, "{}")
                 except (OpError, PermissionDenied, OSError, ProtocolError):
                     return self.send(200, json.dumps({"source": "cable", "unavailable": True}))
                 finally:
@@ -313,6 +324,22 @@ def make_server(store: Path, port: int = 0):
                 if percent is not None:
                     result["percent"] = percent
                 return self.send(200, json.dumps(result))
+            receivers = [f for f in found if f.mode == "dongle_paired"]
+            if len(receivers) == 1 and len(found) == 1:
+                if not runner.claim():
+                    return self.send(200, json.dumps({"busy": True}))
+                try:
+                    from ..ops.rf_battery import read as rf_battery_read
+                    ch = cli.open_channel(receivers[0].info, 0x81)
+                    try:
+                        reading = rf_battery_read(ch)
+                    finally:
+                        ch.close()
+                    return self.send(200, json.dumps({"source": "dongle", **(reading or {"unavailable": True})}))
+                except (OpError, PermissionDenied, OSError, ProtocolError):
+                    return self.send(200, json.dumps({"source": "dongle", "unavailable": True}))
+                finally:
+                    runner.release()
             return self.send(200, "{}")
 
         def api_battery_log(self):

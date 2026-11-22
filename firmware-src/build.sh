@@ -19,6 +19,17 @@ tc32-elf-ld -N -T packer.ld --no-check-sections \
 	--defsym save_settings=0xd538 --defsym stock_chords=0xcfa4 --defsym stock_vendor_a=0xf56c --defsym stock_vendor_b=0xf594 \
 	--defsym flash_unlock=0xbd00 --defsym flash_erase=0xfe98 --defsym stock_crc=0xaf80 --defsym stock_limit=0x890 --defsym stock_isqrt=0x84c --defsym stock_scan=0xc3a8 --defsym stock_save_mappings=0xd7d4 --defsym stock_idle=0xd190 --defsym stock_connected_bt=0xa28c --defsym stock_connected_24g=0xe088 --defsym stock_da58=0xda58 --defsym stock_reboot=0xd056 --defsym stock_sweep=0xb388 --defsym stock_send=0xeb7c --defsym stock_clear=0x103f8 --defsym __udivsi3=0x850c --defsym __divsi3=0x8504 \
 	"$out/packer.o" "$out/settings.o" "$out/rest.o" "$out/battery.o" "$out/hook.o" -o "$out/packer.elf"
+# Read-only dongle RF buffer probe: separate from dongle.s and its DInput code.
+tc32-elf-as dongle-rf-read.s -o "$out/dongle-rf-read.o"
+tc32-elf-ld -N -Ttext=0xff88 --defsym flash_read=0xcd94 "$out/dongle-rf-read.o" -o "$out/dongle-rf-read.elf"
+tc32-elf-objcopy -O binary -j .text "$out/dongle-rf-read.elf" "$out/dongle-rf-read.bin"
+tc32-elf-as dongle-rf-hook.s -o "$out/dongle-rf-hook.o"
+tc32-elf-ld -N -Ttext=0xd598 --defsym rf_read=0xff88 "$out/dongle-rf-hook.o" -o "$out/dongle-rf-hook.elf"
+tc32-elf-objcopy -O binary -j .text "$out/dongle-rf-hook.elf" "$out/dongle-rf-hook.bin"
+[ "$(wc -c < "$out/dongle-rf-read.bin")" -le 120 ] || { echo "Dongle RF diagnostic exceeds code cave" >&2; exit 1; }
+[ "$(wc -c < "$out/dongle-rf-hook.bin")" -eq 4 ] || { echo "Unexpected dongle RF hook size" >&2; exit 1; }
+# Experimental controller-side 2.4 GHz battery trailer (separate optional recipe).
+python3 "$here/../tools/build_rf_battery.py" --compiler "$(command -v tc32-elf-gcc)" --output "$out/rf-battery" --blobs "$blobs"
 tc32-elf-as dongle.s -o "$out/dongle.o"   # the dongle (firmware 1.03): its own link, with its own addresses
 tc32-elf-ld -N -Ttext=0xff48 --defsym reenum=0xdc9c --defsym init_idle=0xddf8 --defsym init_xinput=0xde28 "$out/dongle.o" -o "$out/dongle.elf"
 tc32-elf-objcopy -O binary -j .text "$out/dongle.elf" "$out/dinput.bin"
@@ -35,7 +46,7 @@ if [ -n "${EXTRA_CFLAGS:-}" ] && [ -z "${TEST_COPY:-}" ]; then  # a test build m
 	echo "Built in $out with $EXTRA_CFLAGS. The package's blobs are unchanged." ; exit 0
 fi
 mkdir -p "$blobs"
-cp "$out"/{packer,noop,rumble,led,hook,ringtail,ringhook,vhooka,vhookb,pollhook,hgamea,hgameb,hbuzza,hbuzzb,hidle,hstickl,hstickr,hscan,hidletask,hunplug,hota,hsweep,resthook,hstall,battlog,loghook,battpct,hpcta,hpctb,wdog,stall,sram,report-map,dinput,longrumble,lrhooka,lrhookb,lrwrite}.bin "$blobs/"
+cp "$out"/{dongle-rf-read,dongle-rf-hook,packer,noop,rumble,led,hook,ringtail,ringhook,vhooka,vhookb,pollhook,hgamea,hgameb,hbuzza,hbuzzb,hidle,hstickl,hstickr,hscan,hidletask,hunplug,hota,hsweep,resthook,hstall,battlog,loghook,battpct,hpcta,hpctb,wdog,stall,sram,report-map,dinput,longrumble,lrhooka,lrhookb,lrwrite}.bin "$blobs/"
 python3 "$here/../tools/build_ring_hold.py" --compiler "$(command -v tc32-elf-gcc)" --output "$out/ring-hold" --blobs "$blobs"
 python3 "$here/../tools/build_usb_mode_prototype.py" --integrated "$blobs"
 PYTHONPATH="$here/..${PYTHONPATH:+:$PYTHONPATH}" python3 "$here/../tools/build_bt_modes.py" --compiler "$(command -v tc32-elf-gcc)" --output "$out/bt-modes" --blobs "$blobs"

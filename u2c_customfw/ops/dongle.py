@@ -27,7 +27,9 @@ FLASH, BOOT_END, CAL = 0x20000, 0x6000, 0x1E000   # the whole part, the bootload
 RECORD = 0x12000              # the update record; the version times 100 at +0x0c
 STOCK_SHA256 = "15caaa7c705629c768dc7c22417abf047cb06b499376c5c8b8fe14c0f606028c"     # 8BitDo's v1.03
 CHUNK = 46                    # the largest read the dongle answers
-DINPUT = (BLOBS / "dinput.bin").read_bytes()   # link_mode, firmware-src/dongle.s
+DINPUT = (BLOBS / "dinput.bin").read_bytes()
+RF_READ = (BLOBS / "dongle-rf-read.bin").read_bytes()
+RF_HOOK = (BLOBS / "dongle-rf-hook.bin").read_bytes()   # link_mode, firmware-src/dongle.s
 TWEAKS = {  # key: (title, edits as (address, 8BitDo's bytes, the tweak's bytes))
     "dongle_360": ("Xbox 360 controller over 2.4 GHz", (
         (0xF1A0, bytes.fromhex("12 01 00 02 00 00 00 08 c8 2d 0a 31 14 01 01 02 03 01"),   # the X-input device descriptor,
@@ -36,6 +38,21 @@ TWEAKS = {  # key: (title, edits as (address, 8BitDo's bytes, the tweak's bytes)
     "dongle_dinput": ("D-input mode with B + Home", (
         (0x6940, bytes.fromhex("0d 90 72 9a"), bytes.fromhex("0f 90 02 9b")),   # at link-up (RAM code, run at 0x940): bl 0xde28 -> bl 0xff48
         (0xFF48, bytes(len(DINPUT)), DINPUT),                                   # link_mode, in the zeros after the image
+    )),
+    "dongle_rf_tail": ("Experimental RF tail capture (28 bytes)", (
+        # After classification of RF report IDs 8D/8E/8F/90/92, the stock
+        # receive handler at 0x6C60 copies 20 bytes from the 64-byte radio
+        # staging buffer (r5+5) to the 32-byte diagnostic report buffer.
+        # Extend ONLY the copy count; checksum and input processing still
+        # operate on the stock first 20 bytes. Bytes 20..27 are experimental
+        # and must not be interpreted unless a complete valid trailer exists.
+        (0x6C64, bytes.fromhex("14 a2"), bytes.fromhex("1c a2")),
+    )),
+    "dongle_rf_read": ("Diagnostic RF packet read via USB", (
+        # 0xD598 calls the stock flash copier 0xCD94; optionally intercept only
+        # 0x843108 (up to 32 bytes), leaving every flash read untouched.
+        (0xD598, bytes.fromhex("ff 97 fc 9b"), RF_HOOK),
+        (0xFF88, bytes(len(RF_READ)), RF_READ),
     )),
 }
 
