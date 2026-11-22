@@ -3,7 +3,7 @@
 <p align="center">
   <a href="https://github.com/arithon-f/8bitdo-ultimate-2c-toolkit/releases/latest"><img src="https://img.shields.io/github/v/release/arithon-f/8bitdo-ultimate-2c-toolkit" alt="Latest release"></a>
   <a href="https://github.com/arithon-f/8bitdo-ultimate-2c-toolkit/releases"><img src="https://img.shields.io/github/downloads/arithon-f/8bitdo-ultimate-2c-toolkit/total" alt="Downloads"></a>
-  <img src="https://img.shields.io/badge/platform-macOS%2013%2B%20%7C%20Linux-blue" alt="macOS 13 or later">
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-blue" alt="macOS 13 or later">
   <img src="https://img.shields.io/github/license/arithon-f/8bitdo-ultimate-2c-toolkit" alt="GPL-3.0 license">
 </p>
 
@@ -12,7 +12,7 @@
   <img src="docs/images/diagnostics.png" alt="The Diagnostics tab, testing a controller over Bluetooth" width="420">
 </p>
 
-U2C Firmware Toolkit is a toolkit for the **8BitDo Ultimate 2C Wireless** and its **2.4 GHz dongle** on macOS and Linux: everything they need, in one app. It makes macOS and its games treat the controller as a native one, by cable, over Bluetooth and through the dongle, adds rumble and control over its light, and lets you test it, back both up and restore them. The firmware tweaks live in the controller and dongle themselves; on Linux, some connection modes additionally depend on system drivers (see the Linux guide).
+U2C Firmware Toolkit is a toolkit for the **8BitDo Ultimate 2C Wireless** and its **2.4 GHz dongle** on Windows, Linux and macOS: everything they need, in one app. It makes macOS and its games treat the controller as a native one, by cable, over Bluetooth and through the dongle, adds rumble and control over its light, and lets you test it, back both up and restore them. The firmware tweaks live in the controller and dongle themselves; on Linux, some connection modes additionally depend on system drivers (see the Linux guide).
 
 Out of the box, macOS and most Mac games see the Ultimate 2C as a generic HID device, not as a game controller. After this, they see an Xbox controller.
 
@@ -37,9 +37,21 @@ The app itself also tests the controller, backs up the controller and the dongle
 
 It works with the **Ultimate 2C Wireless on firmware 1.09** and its **2.4 GHz dongle on firmware 1.03**, on Macs with Apple silicon or Intel and macOS 13 or later. It doesn't work with other models. [docs/tweaks.md](docs/tweaks.md) explains each change in detail.
 
+## Beta prerelease (Windows, Linux and macOS)
+
+The current development version is **1.3.0b1**. Pushing the annotated Git tag
+`v1.3.0b1` runs GitHub Actions to build a **Windows x86_64 ZIP with EXE**,
+**Linux x86_64 AppImage**, and **macOS ZIPs for arm64 and Intel x86_64**. All
+four packages are uploaded to the same GitHub **Pre-release** after successful
+builds and smoke checks. See the [releases page](https://github.com/arithon-f/8bitdo-ultimate-2c-toolkit/releases)
+for betas; `releases/latest` intentionally points to stable releases only.
+
+Linux and macOS 2.4 GHz battery telemetry still need verification on physical
+hardware. Beta packages are not signed or notarized; see platform instructions.
+
 ## Install (macOS 13 or later)
 
-1. Download the zip for your Mac from the [releases page](https://github.com/arithon-f/8bitdo-ultimate-2c-toolkit/releases/latest) and unzip it: `firmware-toolkit-<version>-macos-arm64.zip` for Apple silicon, or `firmware-toolkit-<version>-macos-x86_64.zip` for Intel. The Intel build has been tested under Rosetta, not yet on an Intel Mac.
+1. Download the zip for your Mac from the [releases page](https://github.com/arithon-f/8bitdo-ultimate-2c-toolkit/releases) and unzip it: `firmware-toolkit-<version>-macos-arm64.zip` for Apple silicon, or `firmware-toolkit-<version>-macos-x86_64.zip` for Intel. The Intel build has been tested under Rosetta, not yet on an Intel Mac.
 2. Open the app once. macOS will block it because it is not signed: open **System Settings → Privacy & Security**, scroll to the message about the app and click **Open Anyway** (right-click → Open no longer works on current macOS). You can also remove it from quarantine with `xattr`, as the [FAQ](docs/faq.md#macos-wont-open-the-app) shows.
 3. When asked, allow **Input Monitoring** (System Settings → Privacy & Security → Input Monitoring). The app needs it to talk to the controller and the dongle.
 

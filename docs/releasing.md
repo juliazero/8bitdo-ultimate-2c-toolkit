@@ -1,27 +1,46 @@
-# Releasing a new version
+# Releasing a beta (GitHub Actions)
 
-For Windows ZIP and Linux AppImage builds, see [desktop builds](desktop-builds.md).
-The `desktop packages` workflow uploads these artifacts for manual runs and release
-tags; attach the resulting packages and checksum files when preparing a release.
+Current beta: **1.3.0b1**; tag: **`v1.3.0b1`**.
 
-0. If a tweak changed, check that its old bytes are an accepted form (the app then tells the people who have it, see CONTRIBUTING.md) and say in the release notes what changed and that installing the tweaks again updates it.
-1. Bump the version in `pyproject.toml`, `u2c_customfw/__init__.py` and `tests/test_smoke.py`, and run the tests.
-2. Commit, tag and push: `git tag -a vX.Y.Z -m "U2C Firmware Toolkit X.Y.Z"`, then `git push origin main vX.Y.Z`.
-3. Build the app and its zip for each architecture: `macos/build.sh` (writes `dist/firmware-toolkit-X.Y.Z-macos-arm64.zip`) and `macos/build.sh x86_64` (writes `dist/firmware-toolkit-X.Y.Z-macos-x86_64.zip`).
-4. Publish the release with both zips attached, not as a prerelease:
-   `gh release create vX.Y.Z --title "U2C Firmware Toolkit X.Y.Z" dist/firmware-toolkit-X.Y.Z-macos-arm64.zip dist/firmware-toolkit-X.Y.Z-macos-x86_64.zip`
+1. Make changes and run tests. The version must match in `pyproject.toml`,
+   `u2c_customfw/__init__.py` and the version test (`tests/test_smoke.py`).
+2. Validate: `python3 tools/check_release.py --tag v1.3.0b1`.
+3. Push the commit first. In the target repository, create an annotated tag
+   for the commit containing the workflow and the version bump:
 
-## Homebrew
+   ```bash
+   git tag -a v1.3.0b1 -m "Firmware Toolkit 1.3.0 beta 1"
+   git push origin HEAD
+   git push origin v1.3.0b1
+   ```
 
-Publishing the release runs `.github/workflows/homebrew.yml`, which points the formula and cask in
-[arithon-f/homebrew-tap](https://github.com/arithon-f/homebrew-tap) at the new tag and zip
-(version, and the SHA-256 of each zip: the cask picks the arm64 or x86_64 one) and commits them as `github-actions[bot]`. Nothing has to be edited by hand.
+4. GitHub Actions → **desktop packages** builds Windows x86_64, Linux x86_64
+   AppImage, macOS arm64 and macOS x86_64. The prerelease job runs only once
+   **all four builds succeed**, verifies checksums and creates a single GitHub
+   Pre-release with all four packages. If a build fails, fix it and create a
+   **new beta tag** (e.g. `v1.3.0b2`); avoid force-moving published tags.
+5. Confirm the release is marked **Pre-release**, assets and checksums are
+   present, and document any limitations in the release notes. Manual workflow
+   runs and pull requests only upload Actions artifacts; they do not publish.
 
-- Check that it ran: the **homebrew** run under Actions, and a commit "firmware-toolkit X.Y.Z" in the tap.
-- If it failed (for example, the zip was attached more than about five minutes after publishing), run it again from
-  Actions → homebrew → Run workflow; the tag field is optional and defaults to the latest release. A rerun on a tag the
-  tap already has changes nothing.
-- It writes to the tap with a deploy key (read-write, on `homebrew-tap`) whose private half is the `TAP_DEPLOY_KEY`
-  secret of this repository. If the key is removed, make a new ed25519 key pair, add the public half as a write deploy
-  key on the tap (`gh repo deploy-key add --allow-write`) and store the private half with `gh secret set TAP_DEPLOY_KEY`.
-- After the bump, `brew update && brew upgrade firmware-toolkit` and `brew upgrade --cask firmware-toolkit` should install it.
+GitHub's `GITHUB_TOKEN` needs `contents: write` for the publishing job (already
+requested by the workflow); repository Actions settings must permit it. No
+personal access token or additional release secret is needed. These beta builds
+are **not signed/notarized**. A tag alone is not a firmware hardware test.
+
+## Stable releases / Homebrew
+
+Beta tags intentionally do **not** update the Homebrew formula/cask. Preserve
+the existing stable-release workflow and update Homebrew only when publishing a
+stable release. `releases/latest` intentionally excludes prereleases.
+
+The manual macOS packagers remain available:
+
+```bash
+bash macos/build.sh arm64
+bash macos/build.sh x86_64
+```
+
+Windows can be built with `./windows/build.ps1` in PowerShell; Linux AppImage
+with `./linux/build-appimage.sh /path/to/appimagetool`. See
+[desktop build details](desktop-builds.md).

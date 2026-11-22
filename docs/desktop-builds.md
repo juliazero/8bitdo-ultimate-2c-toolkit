@@ -50,20 +50,36 @@ rules are also included under `usr/share/firmware-toolkit/udev/` in the AppImage
 If FUSE is unavailable, run `./firmware-toolkit-*.AppImage --appimage-extract-and-run`.
 A graphical session is required; Python and QtWebEngine are bundled.
 
-## Verification and CI
+## GitHub Actions: build and publish beta releases
 
-`desktop packages` in GitHub Actions builds Windows x86_64 and Linux x86_64 on
-their native systems, and uploads artifacts. It can be run manually and also runs
-for release tags and relevant pull requests. It does not publish a release.
-Every build starts its frozen application in `--smoke-test report.json --smoke-ui` mode,
-checks resources, dependencies and the local HTTP server, then loads the actual
-embedded WebUI with a simulated controller. It verifies its tabs, secure context
-and availability of the Gamepad API without using hardware. Linux CI uses Xvfb.
-Linux additionally checks libusb and repeats the test through the AppImage.
+The [`desktop packages`](../.github/workflows/desktop.yml) workflow builds on
+**four native GitHub-hosted runners**: Windows x86_64, Ubuntu 22.04 x86_64,
+macOS arm64 and macOS Intel x86_64. On pull requests and manual dispatch it
+uploads build artifacts for inspection, without creating a GitHub Release.
 
-The existing test workflow still runs on Windows, Linux and macOS. Hardware
-flashing and Bluetooth behavior still require testing on each actual OS/device.
-macOS retains the existing Swift application and `macos/build.sh` build process.
+An annotated `vX.Y.ZbN` tag (currently `v1.3.0b1`) triggers the same builds
+and, after **all four succeed**, a publishing job. It verifies the version,
+exactly four expected packages and their SHA-256 checksums before publishing
+them together as a GitHub **Pre-release**, never a latest stable release.
+If any build or smoke check fails, the release is **not published**.
+The release job only needs the standard `GITHUB_TOKEN` with `contents: write`;
+ensure repository Actions settings permit workflow write access. See
+[releasing](releasing.md) for instructions and tag examples.
+
+Expected files for `1.3.0b1`:
+
+- `firmware-toolkit-1.3.0b1-windows-x86_64.zip` (portable EXE and bundled runtime)
+- `firmware-toolkit-1.3.0b1-linux-x86_64.AppImage`
+- `firmware-toolkit-1.3.0b1-macos-arm64.zip`
+- `firmware-toolkit-1.3.0b1-macos-x86_64.zip`
+- A matching `.sha256` for each package
+
+Windows and Linux builds run the frozen application's simulator/UI smoke test;
+Linux also exercises the AppImage. The existing macOS Swift build packages the
+native application but has **no hardware or GUI smoke test** on CI. The regular
+test workflow is independent and runs the Python and JS suites on all three
+operating systems. Hardware flashing and battery support still require tests
+on actual devices; especially Linux and macOS RF battery telemetry.
 
 On Windows, double-click `Simulator.cmd` next to `Firmware Toolkit.exe` to
 open the simulator. The launcher resolves the executable relative to itself,

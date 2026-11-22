@@ -1,45 +1,123 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# A beta tag builds native packages on all three platforms and publishes the
+# prerelease only after ALL four artifacts pass their own build/smoke checks.
 name: desktop packages
 on:
   workflow_dispatch:
   push:
-    tags: ['v*']
+    tags: ['v*b*']
   pull_request:
     paths:
       - 'u2c_customfw/**'
       - 'tools/build_desktop.py'
+      - 'tools/check_release.py'
       - 'linux/**'
       - 'windows/**'
+      - 'macos/**'
       - 'pyproject.toml'
       - '.github/workflows/desktop.yml'
 permissions:
   contents: read
 jobs:
-  build:
-    strategy:
-      matrix:
-        os: [windows-latest, ubuntu-22.04]
-    runs-on: ${{ matrix.os }}
+  verify-version:
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install -e '.[desktop]' 'pyinstaller==6.22.3' 'Pillow==12.3.0'
-      - if: runner.os == 'Linux'
+      - if: startsWith(github.ref, 'refs/tags/')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python3 tools/check_release.py --tag "$RELEASE_TAG"
+      - if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: python3 tools/check_release.py
+
+  build:
+    needs: verify-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: windows-x86_64
+            os: windows-latest
+            platform: windows
+          - id: linux-x86_64
+            os: ubuntu-22.04
+            platform: linux
+          - id: macos-arm64
+            os: macos-15
+            platform: macos
+            arch: arm64
+          - id: macos-x86_64
+            os: macos-15-intel
+            platform: macos
+            arch: x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - if: matrix.platform != 'macos'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - if: matrix.platform == 'linux'
         run: |
+          python -m pip install -e '.[desktop]' 'pyinstaller==6.22.3' 'Pillow==12.3.0'
           sudo apt-get update
           sudo apt-get install -y libusb-1.0-0 xvfb libegl1 libopengl0 libxkbcommon-x11-0 libxcb-cursor0 libnss3 libasound2
           curl --fail --location --retry 3 -o appimagetool https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
           echo 'ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  appimagetool' | sha256sum --check
           chmod +x appimagetool
           xvfb-run -a bash linux/build-appimage.sh ./appimagetool
-      - if: runner.os == 'Windows'
-        run: powershell -ExecutionPolicy Bypass -File windows/build.ps1
+      - if: matrix.platform == 'windows'
+        shell: pwsh
+        run: ./windows/build.ps1
+      - if: matrix.platform == 'macos'
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          test "$(uname -m)" = "$TARGET_ARCH" || { echo "Runner arch mismatch"; exit 1; }
+          bash macos/build.sh "$TARGET_ARCH"
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          file="dist/firmware-toolkit-$version-macos-$TARGET_ARCH.zip"
+          (cd dist && shasum -a 256 "$(basename "$file")" > "$(basename "$file").sha256")
       - uses: actions/upload-artifact@v4
         with:
-          name: firmware-toolkit-${{ runner.os }}
+          name: firmware-toolkit-${{ matrix.id }}
           path: |
             dist/*.zip
             dist/*.AppImage
             dist/*.sha256
           if-no-files-found: error
+          retention-days: 14
+
+  prerelease:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: firmware-toolkit-*
+          merge-multiple: true
+          path: dist
+      - name: Verify all platform assets and checksums
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python3 tools/check_release.py --tag "$RELEASE_TAG" --assets dist
+      - name: Publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" dist/*.zip dist/*.AppImage dist/*.sha256 \
+            --verify-tag --prerelease --latest=false \
+            --title "Firmware Toolkit ${RELEASE_TAG#v} (Beta)" \
+            --notes-file docs/beta-release-notes.md

@@ -8,6 +8,8 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
 arch=${1:-arm64}
 version=$(python3 -c "import re; print(re.search(r'version = \"(.+?)\"', open('pyproject.toml').read()).group(1))")
+# Apple requires numeric bundle versions; the visible toolkit version keeps the beta suffix.
+bundle_version=$(printf "%s" "$version" | sed -E "s/(a|b|rc)[0-9]+$//")
 PBS=https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.12.16%2B20261026
 case "$arch" in
   arm64) pbs_arch=aarch64; PBS_SHA256="fbf4afef53c2a6b72bb741bc06d5671a9dfaf87bd84e5aa73ac9b3d0d589f14e"; out=dist ;;
@@ -27,7 +29,7 @@ tar xzf "$tarball" -C "$app/Contents/Resources"
 rsync -a --exclude __pycache__ --exclude diagsim.js u2c_customfw "$app/Contents/Resources/app/"
 cp DISCLAIMER.md LICENSE "$app/Contents/Resources/app/"
 cp macos/AppIcon.icns "$app/Contents/Resources/"  # rendered from macos/icon.svg
-sed "s/@VERSION@/$version/g" macos/Info.plist > "$app/Contents/Info.plist"
+sed -e "s/@BUNDLE_VERSION@/$bundle_version/g" -e "s/@VERSION@/$version/g" macos/Info.plist > "$app/Contents/Info.plist"
 swiftc -O -target "$arch-apple-macos13.0" -o "$app/Contents/MacOS/u2c-customfw" macos/main.swift macos/Diagnostics.swift macos/MenuBattery.swift -framework AppKit -framework WebKit -framework IOKit -framework GameController -framework CoreHaptics
 codesign --force --deep -s - "$app"
 zip="firmware-toolkit-$version-macos-$arch.zip"

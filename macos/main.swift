@@ -32,7 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSToolbarDelegate, WKN
                           styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         // The title bar replaces the page's own top bar (hidden with ?native=1): name, what it is for, and Help.
         window.title = "U2C Firmware Toolkit"
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        let version = Bundle.main.object(forInfoDictionaryKey: "U2CReleaseVersion") as? String ?? ""
         window.subtitle = "v\(version) · 8BitDo Ultimate 2C Wireless · firmware 1.09 only"
         window.titlebarAppearsTransparent = true    // takes the window colour, so it blends into the page
         let toolbar = NSToolbar(identifier: "main")
