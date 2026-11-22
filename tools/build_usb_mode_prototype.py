@@ -109,12 +109,13 @@ def build(entry=ENTRY, vendor_targets=(0xf56c,0xf594)):
     c.store(0, 4, 8)
     c.label('done'); c.op(0xbd70)
     # Monitor both routes before the unmodified vendor handlers. Parameters:
-    # 81 05 05 reads and 81 05 00 21 session open are the only non-locking commands.
+    # Battery reads are handled before the activity guard: they neither lock nor delay mode switching.
+    # All other vendor traffic retains the existing update safety policy.
     for name, stock in zip(('vendor_a','vendor_b'), vendor_targets):
         c.label(name); c.op(0xb510); c.op(0x1c04)  # r4 = packet
-        c.call('activity'); c.op(0x1c20); c.call('battery_reply')
+        c.call('battery_reply')
         c.cmp(0, 0); c.branch(name + '_done', 1)
-        c.op(0x1c20); c.call(stock)
+        c.op(0x1c20); c.call('activity'); c.op(0x1c20); c.call(stock)
         c.label(name + '_done'); c.op(0xbd10)
     c.label('startup'); c.op(0xb510); c.call(0xf014)
     c.literal(0, 0x800518); c.byte(0, 0); c.mov(1, 1); c.op(0x4208); c.branch('startup_done', 0)  # never re-enumerate USB on battery

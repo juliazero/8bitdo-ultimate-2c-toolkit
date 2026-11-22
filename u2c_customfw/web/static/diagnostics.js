@@ -56,14 +56,20 @@ let windowsNativeActive = null;
 let windowsBatteryPoll = null, windowsBatteryBusy = false, windowsBatteryPad = null;
 let windowsBattery = { level: -1, state: "unknown" };
 let windowsStockState = null, windowsStockPad = null, windowsStockAt = 0;
-let windowsStockStream = null, windowsStockRetryAt = 0;
+let windowsStockStream = null, windowsStockRetryAt = 0, windowsStockStreamPad = null;
 function stopWindowsStockStream() {
   windowsStockStream?.abort();
-  windowsStockStream = null;
+  windowsStockStream = null; windowsStockStreamPad = null;
 }
 function acceptWindowsStockState(p, state) {
-  if (!windowsPoll || windowsPad()?.id !== p.id) return;
+  if (!windowsPoll || windowsPads().length !== 1 || windowsPad()?.id !== p.id) return;
   if (state.available) {
+    const id = p.id.toLowerCase();
+    const match = id.match(/(?:vendor:\s*2dc8\s+product:\s*|2dc8[-:])(301[bcd])/);
+    if (state.product && match && state.product !== parseInt(match[1], 16)) return;
+    // 301B can be either USB or Bluetooth. Never reuse a report from the other transport.
+    const category = windowsCategory(p);
+    if (state.transport && ((category.startsWith("Bluetooth") && state.transport !== "Bluetooth") || (category.startsWith("USB ·") && state.transport !== "USB"))) return;
     windowsStockState = state;
     windowsStockPad = p.id;
     windowsStockAt = Date.now();
@@ -73,8 +79,9 @@ function acceptWindowsStockState(p, state) {
   }
 }
 async function streamWindowsStock(p) {
-  if (!windowsPoll || windowsStockStream || Date.now() < windowsStockRetryAt || document.hidden) return;
+  if (!windowsPoll || windowsStockStream || windowsPads().length !== 1 || cableBatteryBusy || (typeof busy !== "undefined" && busy) || (typeof reading !== "undefined" && reading) || Date.now() < windowsStockRetryAt || document.hidden) return;
   const control = windowsStockStream = new AbortController();
+  windowsStockStreamPad = p.id;
   let reader, watchdog = setTimeout(() => control.abort(), 2000);
   try {
     const response = await fetch("/api/windows-stock-stream?token=" + encodeURIComponent(token), {signal: control.signal, cache: "no-store"});
@@ -101,13 +108,16 @@ async function streamWindowsStock(p) {
     clearTimeout(watchdog);
     if (reader) { reader.cancel().catch(() => {}); reader.releaseLock(); }
     if (windowsStockStream === control) {
-      windowsStockStream = null;
+      windowsStockStream = null; windowsStockStreamPad = null;
       windowsStockRetryAt = Date.now() + 200;
     }
   }
 }
 const windowsPads = () => Array.from(navigator.getGamepads ? navigator.getGamepads() : []).filter(p => p && p.connected);
 const windowsPad = () => windowsPads().find(p => p.mapping === "standard") || windowsPads()[0];
+function knownStockPad(p) {
+  return /vendor:\s*2dc8\s+product:\s*301[bcd]|2dc8[-:]301[bcd]/i.test(p.id);
+}
 function mapUltimate2cBluetooth(p) {
   // SDL's 2dc8:301b button map; axes here use the browser's HID usage slots,
   // not SDL's axis indices. Firefox exposes X/Y/Z/Rx/Ry/Rz ... Hat as 0..9.
@@ -181,12 +191,6 @@ async function windowsRumbleStatus() {
   finally { windowsRumbleBusy = false; }
 }
 function windowsCategory(p, inputMode = null) {
-  // USB descriptors can belong to either the controller or its receiver.
-  // Wait for identification before presenting a transport as confirmed.
-  if ((typeof reading !== "undefined" && reading) ||
-      (typeof refreshing !== "undefined" && refreshing) ||
-      (typeof fw !== "undefined" && !fw)) return "Identifying connection…";
-  if (typeof fw !== "undefined" && fw && fw.error) return "Connection unavailable";
   const id = p.id.toLowerCase();
   if (/vendor:\s*2dc8\s+product:\s*301d|2dc8[-:]301d/.test(id)) return "USB · D-input";
   if (/vendor:\s*2dc8\s+product:\s*301b|2dc8[-:]301b/.test(id)) {
@@ -195,6 +199,9 @@ function windowsCategory(p, inputMode = null) {
   }
   if (/vendor:\s*2dc8\s+product:\s*301c|2dc8[-:]301c/.test(id)) return "2.4 GHz dongle · D-input";
   if (/vendor:\s*045e\s+product:\s*0b13|045e[-:]0b13/.test(id)) return "Bluetooth · XInput";
+  // A generic XInput identity cannot distinguish a receiver from a cable until identification.
+  if ((typeof reading !== "undefined" && reading) || (typeof refreshing !== "undefined" && refreshing)) return "Identifying connection…";
+  if (typeof fw !== "undefined" && fw && fw.error) return "Connection unavailable";
   // Associate the browser input with transport metadata only when unambiguous.
   const devices = typeof st === "undefined" ? [] : (st.devices || []).filter(d =>
     ["cable", "cable_360", "cable_dinput", "dongle_paired", "bluetooth", "bluetooth_xbox", "xinput_only"].includes(d.mode));
@@ -204,7 +211,7 @@ function windowsCategory(p, inputMode = null) {
     if (mode === "bluetooth") return "Bluetooth · D-input";
     if (mode === "bluetooth_xbox") return "Bluetooth · XInput";
     if (mode === "dongle_paired") return "2.4 GHz dongle · " + (inputMode || "XInput");
-    if (mode === "cable" || mode === "cable_360") return "USB · " + (inputMode || "XInput");
+    if (mode === "cable" || mode === "cable_360") return typeof fw !== "undefined" && !fw ? "USB / 2.4 GHz · " + (inputMode || "XInput") : "USB · " + (inputMode || "XInput");
     // An input-only Xbox identity cannot distinguish cable from receiver.
   }
   return inputMode ? "Gamepad · " + inputMode : "Gamepad";
@@ -220,6 +227,7 @@ function windowsModelName(p) {
   return p.id;
 }
 function windowsTick() {
+  if ((typeof busy !== "undefined" && busy) || (typeof reading !== "undefined" && reading) || cableBatteryBusy) stopWindowsStockStream();
   const p = windowsPad();
   if (!p) {
     stopWindowsStockStream();
@@ -252,16 +260,18 @@ function windowsTick() {
       if (e.rt > TRIGGER_SEEN) e.pressed.push("RT");
     }
   }
-  if (mapped || /D-input/.test(e.category)) {
-    // Chromium can map the standard controls but omit the two vendor paddles.
-    // Read their physical report bits through the same read-only HID stream.
-    if (windowsStockPad === p.id && windowsStockState && Date.now()-windowsStockAt <= 3000) {
-      e.pressed=e.pressed.filter(name=>name!=="L4" && name!=="R4");
-      e.pressed.push(...(windowsStockState.pressed || []).filter(name=>name==="L4" || name==="R4"));
+  if (windowsStockStreamPad && windowsStockStreamPad !== p.id) { stopWindowsStockStream(); windowsStockState = null; windowsStockPad = null; }
+  if (windowsPads().length === 1 && (knownStockPad(p) || mapped || /D-input/.test(e.category))) {
+    const native = windowsStockPad === p.id && Date.now()-windowsStockAt <= 3000 ? windowsStockState : null;
+    // Keep browser sticks/buttons at the UI frame rate. HID supplements only
+    // the controls that the browser cannot expose reliably.
+    if (native && Array.isArray(native.pressed)) {
+      e.pressed = e.pressed.filter(name => name !== "L4" && name !== "R4");
+      e.pressed.push(...native.pressed.filter(name => name === "L4" || name === "R4"));
     }
     streamWindowsStock(p);
   } else {
-    stopWindowsStockStream();
+    stopWindowsStockStream(); windowsStockState = null; windowsStockPad = null;
   }
   window.u2cDiagnostics({ ...e, type: "state" });
   window.u2cDiagnostics({ ...e, type: "input" });
@@ -278,7 +288,7 @@ const windowsBridge = { postMessage(m) {
     windowsRumblePoll = setInterval(windowsRumbleStatus, 1000);
     windowsRumbleStatus();
     clearInterval(windowsBatteryPoll);
-    windowsBatteryPoll = setInterval(windowsBatteryStatus, 10000);
+    windowsBatteryPoll = setInterval(windowsBatteryStatus, 60000);
     windowsTick();
   } else if (m.op === "stop") {
     stopWindowsStockStream();
@@ -329,6 +339,10 @@ function clearPending() {
 function diagnosticsShow() {
   clearPending();
   testVisible = true; testState = null; testConnected = null; testName = null; testMounted = null; testSeen = new Set();
+  syncCableBattery();
+  if (cableBatteryKey && !cableBattery) cableBatteryDue = Math.max(cableBatteryDue, Date.now() + CABLE_BATTERY_SETTLE);
+  clearInterval(cableBatteryTimer);
+  cableBatteryTimer = setInterval(pollCableBattery, 1000); // scheduling only; hardware reads are at least 60 seconds apart
   const b = bridge();
   if (b) b.postMessage({ op: "start" });
   diagnosticsRender();
@@ -337,6 +351,7 @@ function diagnosticsShow() {
 function diagnosticsHide() {
   clearPending();
   testVisible = false;
+  clearInterval(cableBatteryTimer); cableBatteryTimer = null;
   const b = bridge();
   if (b) b.postMessage({ op: "stop" });
 }
@@ -350,6 +365,10 @@ function testMode() {
   if (!bridge()) return "web";
   if (busy) return "busy";
   if (st && st.devices.some((d) => d.mode === "boot")) return "boot";
+  // A completed read (including an error/note) releases the gate. Do not
+  // block unrelated gamepads or transports without a firmware target.
+  if (typeof firmwareTarget === "function" && firmwareTarget(st) &&
+      (reading || !fw)) return "identifying";
   if (!testState || !testState.connected) return "none";
   if (!testState.extended) return "noext";
   if (!testState.foreground) return "background";
@@ -361,24 +380,31 @@ const TEST_MESSAGES = {
   busy: "The controller test is unavailable while a task is running.",
   boot: "The controller test can't run in update mode. Disconnect the controller and connect it again by Bluetooth or cable.",
   none: SYSTEM === "Windows" ? "Connect the controller, focus this page and press a button to test it." : "No controller found. Connect the controller by Bluetooth or cable to test it.",
+  identifying: "Reading firmware…",
   noext: `${SYSTEM} sees this controller, but not as a standard gamepad, so its controls can't be tested here.`,
   background: `The controller test is paused, because ${SYSTEM} only sends controller input to the app in front.`,
 };
 
-let cableAsked = false;   // the first reading once a controller by cable is known; then every 15 s
+let cableAsked = false;
 
 function diagnosticsRender() {
   const body = $("test-body");
+  syncCableBattery();
   if (!body || !testVisible) return;
-  if (byCable() !== cableAsked) { cableAsked = byCable(); if (cableAsked) readCableBattery(); else cableBattery = null; }
+  cableAsked = byCable();
   const mode = testMode();
-  const key = mode === "live" ? `live:${testState.name}:${testState.category}:${testState.localities.join()}:${directLine()}` : mode === "noext" && testState.raw ? `raw:${testState.name}` : mode;
+  const key = mode === "live" ? `live:${testState.name}:${testState.category}:${testState.localities.join()}:${directLine()}:${cableAsked}` : mode === "noext" && testState.raw ? `raw:${testState.name}:${cableAsked}` : mode;
   if (key === testMounted) return;
   testMounted = key;
   if (mode === "noext" && testState.raw && SYSTEM === "Windows") {
     body.innerHTML = `<div class="test"><div><h3 id="test-raw-name"></h3><p>This controller is detected without a standard button mapping. Raw button numbers and axis values are shown below; they are not assigned Xbox button names.</p><p id="test-raw-buttons"></p><p id="test-raw-axes"></p><p id="test-battery"></p></div></div>`;
     $("test-raw-name").textContent = testState.name;
+    mountCableBatteryButton();
     paintRawInput(testState);
+    return;
+  }
+  if (mode === "identifying") {
+    body.innerHTML = `<div class="test"><div class="boot" role="status">Reading firmware…</div></div>`;
     return;
   }
   if (mode !== "live") {
@@ -410,22 +436,54 @@ let cableBattery = null;   // the controller's own reading by cable (GET /api/ba
 
 const byCable = () => !!st && st.devices.some((d) => d.mode === "cable" || d.mode === "cable_360" || d.mode === "cable_dinput");
 
+const CABLE_BATTERY_INTERVAL = 60000, CABLE_BATTERY_SETTLE = 5000;
+let cableBatteryBusy = false, cableBatteryTimer = null, cableBatteryKey = "", cableBatteryGeneration = 0, cableBatteryDue = 0;
+function syncCableBattery() {
+  const devices = typeof st === "undefined" ? [] : (st?.devices || []);
+  const cable = devices.filter(d => ["cable", "cable_360", "cable_dinput"].includes(d.mode));
+  const key = cable.length === 1 ? JSON.stringify(cable[0]) : "";
+  if (key !== cableBatteryKey) {
+    cableBatteryKey = key; cableBatteryGeneration++;
+    cableBattery = null;
+    cableBatteryDue = key ? Date.now() + CABLE_BATTERY_SETTLE : 0;
+  }
+}
+function pollCableBattery() {
+  syncCableBattery();
+  if (cableBatteryKey && Date.now() >= cableBatteryDue) readCableBattery();
+}
 async function readCableBattery() {
-  if (!testVisible || busy || !byCable()) return;
+  syncCableBattery();
+  if (!testVisible || document.hidden || busy || testPending || cableBatteryBusy || !cableBatteryKey ||
+      (typeof reading !== "undefined" && reading) || (typeof refreshing !== "undefined" && refreshing)) return;
+  cableBatteryBusy = true;
+  cableBatteryDue = Date.now() + CABLE_BATTERY_INTERVAL;
+  stopWindowsStockStream();
+  const generation = cableBatteryGeneration;
   try {
     const got = await api("GET", "/api/battery");
-    if (!got.busy) cableBattery = got.source === "cable" ? got : null;
-  } catch (e) { return; }
+    syncCableBattery();
+    if (!got.busy && generation === cableBatteryGeneration) cableBattery = got.source === "cable" ? got : null;
+  } catch (e) { return; } finally { cableBatteryBusy = false; }
   paintBattery();
 }
-setInterval(readCableBattery, 15000);
+
+function mountCableBatteryButton() {
+  if (!byCable() || !document.createElement) return;
+  const row = $("test-battery");
+  if (!row?.parentNode?.after) return;
+  const button = document.createElement("button");
+  button.className = "sec small"; button.textContent = "Read USB battery";
+  button.title = "On older USB mode-switching firmware, this query may lock switching until the controller is restarted.";
+  button.onclick = readCableBattery; row.parentNode.after(button);
+}
 
 function paintBattery() {
   const row = $("test-battery");
   if (!row || !testState) return;
   const own = testState.battery, c = cableBattery;
   const none = !own || own.level < 0 || (own.state === "unknown" && own.level === 0);
-  row.textContent = c && byCable() && !c.unavailable
+  row.textContent = byCable() && !c ? "Waiting for USB battery reading…" : c && byCable() && !c.unavailable
     ? (c.full ? "Charged (read from the controller)" : `${c.percent} %${c.charging ? ", charging" : ""} (read from the controller)`)
     : none && c && byCable() && c.unavailable ? "Battery command unavailable in installed firmware" : batteryText(own);
 }
@@ -451,6 +509,7 @@ function mountLive(body) {
   $("test-vibration").textContent = vibrationText(s.localities);
   $("test-res").textContent = directLine();
   paintBattery();
+  mountCableBatteryButton();
   body.querySelectorAll("[data-op]").forEach((b) => (b.onclick = () => vibrate(b.dataset.op)));
   body.querySelectorAll("#test-pic [data-k]").forEach((e) => { e.dataset.off = e.getAttribute(e.tagName === "path" ? "stroke" : "fill") || ""; });
   paintSeen();
@@ -519,7 +578,6 @@ window.u2cDiagnostics = (e) => {
     if (e.connected && testName && e.name !== testName) testSeen = new Set();
     if (e.connected) testName = e.name;
     testState = e;
-    if (testConnected !== null && testConnected !== !!e.connected && !busy && !(st && st.simulation_controls)) refresh();
     testConnected = !!e.connected;
     diagnosticsRender();
     paintBattery();

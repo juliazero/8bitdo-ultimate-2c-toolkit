@@ -91,6 +91,7 @@ void bt_home(void)
     if(count<30) return; // existing main-loop cadence: 30 full 100 ms intervals
     CHORD=255;
     if(!stock_transport()) {
+        if(D_MODE == (kind==128)) return; // the selected Bluetooth profile is already active
         next=SAVED;
         if(kind==128) next|=2; else next&=~2u;
         if(next!=SAVED) { SAVED=next; save_settings(); }

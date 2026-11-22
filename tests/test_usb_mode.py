@@ -89,3 +89,16 @@ class USBModeImageTest(unittest.TestCase):
             state=recipes.identify(old)
             self.assertTrue(state.known)
             self.assertEqual(set(state.recipes),set(keys))
+
+    def test_previous_battery_lock_payload_is_recognized_for_upgrade(self):
+        from u2c_customfw import cli
+        from u2c_customfw.ops import update_available
+        with tempfile.TemporaryDirectory() as tmp, installed(Path(tmp)):
+            keys = ['ring_normal', 'usb_dinput']
+            old = bytearray(recipes.build(cli.fetch.fetch_stock(), keys))
+            old[0x9964-image.BASE:0x9cac-image.BASE] = (recipes.BLOBS/'usbmode-pre-battery-lock-fix.bin').read_bytes()
+            identified = recipes.identify(bytes(old))
+            self.assertTrue(identified.known)
+            self.assertEqual(set(identified.recipes), set(keys))
+            self.assertTrue(identified.older)
+            self.assertTrue(update_available(identified))

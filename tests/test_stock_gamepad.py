@@ -99,3 +99,18 @@ class StockGamepadTest(unittest.TestCase):
             self.assertEqual(stock.decode(self.report(buttons=mask))['pressed'],[label])
             packet=bytes([1,mask,0,15,127,127,127,127,0,0])
             for pid in (0x301c,0x301d):self.assertEqual(stock.decode(packet,pid)['pressed'],[label])
+
+    def test_bluetooth_path_fallback_and_explicit_close(self):
+        hid, device = Mock(), Mock()
+        hid.enumerate.return_value = [dict(path=b"BTHLE#pad", usage_page=1, usage=5, product_id=0x301B)]
+        hid.device.return_value = device
+        device.read.side_effect = [self.report(buttons=1<<4), []]
+        helper = stock.StockGamepad()
+        with patch.object(stock, '_hid', return_value=hid):
+            state = helper.snapshot()
+            self.assertEqual((state['pressed'], state['transport'], state['product']), (['Y'], 'Bluetooth', 0x301B))
+        helper.close(); helper.close()
+        self.assertIsNone(helper.last)
+        self.assertIsNone(helper.path)
+        device.close.assert_called_once()
+        device.write.assert_not_called()

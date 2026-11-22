@@ -28,6 +28,7 @@ stock 16 MHz 32-bit timer, including wrap. The prototype polls on the existing
 Both existing vendor callback routes remain called. Before them, the prototype
 records packets beginning with vendor report ID `81`. Reads, the `00 21` session opener and the exact motor-test header `81 11 04 08` reset
 the hold and enforce two seconds without traffic before a fresh gesture.
+The exact battery status command `81 05 00 5b` is now handled before the guard: it neither locks switching nor resets the hold. The previous battery-enabled build accidentally passed this command through the unknown-command lock.
 Any other vendor operation, including unknown command families, locks switching until
 firmware restart. This includes write unlock, writes, update-mode entry and
 settings changes. The prototype intentionally has no command to clear that lock.
@@ -41,10 +42,10 @@ physical testing; the interpreter has no USB host, radio or charging model.
 
 ## Placement and compatibility
 
-The integrated 460-byte code sits at `0x9a70`, in the unused tail of the dead
+The integrated 572-byte code sits at `0x9a70`, in the unused tail of the dead
 soft-float area already reclaimed by Battery log (`0x9964..0x9cac`). The full
-existing Battery log payload stays byte-for-byte unchanged; 112 bytes remain
-after the new code. No application-area expansion or use of `0x19000` is needed.
+existing Battery log payload stays byte-for-byte unchanged; No bytes remain
+after the new code in this slot. No application-area expansion or use of `0x19000` is needed.
 
 The 20-byte state sits at `0x84165c..0x841670`, between the 28-byte Home ring
 state and Battery log state at `0x841670`. Settings starts at `0x841680`.

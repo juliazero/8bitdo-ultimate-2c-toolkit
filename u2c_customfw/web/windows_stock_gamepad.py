@@ -32,6 +32,13 @@ def decode(report, product=0x301B, usb=False):
     return {"available": True, "analogTriggers": True, "lx": axis(2), "ly": -axis(3), "rx": axis(4), "ry": -axis(5), "lt": lt, "rt": rt, "pressed": pressed}
 
 
+def _is_bluetooth(item):
+    path = item.get("path", b"")
+    text = (path.decode(errors="replace") if isinstance(path, bytes) else path).upper()
+    return (item.get("bus_type") == 2 or "BTHENUM" in text or "BTHLE" in text
+            or "00001812-0000-1000-8000-00805F9B34FB" in text)
+
+
 class StockGamepad:
     def __init__(self):
         self.lock = threading.Lock()
@@ -46,33 +53,38 @@ class StockGamepad:
             self.device.close()
         self.device, self.path, self.last = None, None, None
 
+    def close(self):
+        with self.lock:
+            self._close()
+
     def snapshot(self):
         with self.lock:
             try:
                 hid = _hid()
                 devices = [d for d in hid.enumerate(0x2DC8, 0)
                            if d.get("usage_page") == 1 and d.get("usage") == 5
-                           and ((d.get("product_id", 0x301B) == 0x301B and d.get("bus_type") == 2)
-                                or (d.get("product_id") in (0x301B, 0x301C, 0x301D) and d.get("bus_type") == 1))]
+                           and ((d.get("product_id", 0x301B) == 0x301B and _is_bluetooth(d))
+                                or (d.get("product_id") in (0x301B, 0x301C, 0x301D) and d.get("bus_type") == 1 and not _is_bluetooth(d)))]
                 if len(devices) != 1:
                     self._close()
                     return {"available": False, "connected": False}
                 path = devices[0]["path"]
-                if path != self.path:
+                product = devices[0].get("product_id", 0x301B)
+                usb = not _is_bluetooth(devices[0])
+                if path != self.path or product != self.product or usb != self.usb:
                     self._close()
                     self.device = hid.device()
                     self.device.open_path(path)
                     self.device.set_nonblocking(1)
                     self.path = path
-                    self.product = devices[0].get("product_id", 0x301B)
-                    self.usb = devices[0].get("bus_type") == 1
+                    self.product, self.usb = product, usb
                 for _ in range(64):
                     packet = self.device.read(64)
                     if not packet:
                         break
                     state = decode(bytes(packet), self.product, usb=self.usb)
                     if state:
-                        self.last = state
+                        self.last = {**state, "product": self.product, "transport": "USB" if self.usb else "Bluetooth"}
                 return self.last or {"available": False, "connected": True}
             except (OSError, RuntimeError):
                 self._close()

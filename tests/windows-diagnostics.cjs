@@ -102,19 +102,20 @@ const firmwareContext = vm.createContext({busy: false, CONTROLLER: ['cable', 'ca
   api: async () => ({device: 'dongle', paired: true, known: true, version: 1.03}),
   render() {}, matchInstalled() {},
 });
+vm.runInContext(source.slice(source.indexOf('const firmwareTarget ='), source.indexOf('const firmwareIOBusy =')), firmwareContext);
 vm.runInContext(source.slice(source.indexOf('let fwSeq = 0;'), source.indexOf('document.querySelectorAll("[data-icon]")')), firmwareContext);
 (async () => {
-  vm.runInContext(source.slice(source.indexOf('const deviceKey ='), source.indexOf('const WATCH_MS')), firmwareContext);
-  const originalKey = vm.runInContext('deviceKey(st)', firmwareContext);
+  vm.runInContext(source.slice(source.indexOf('const firmwareDeviceKey ='), source.indexOf('// System and browser notifications')), firmwareContext);
+  const originalKey = vm.runInContext('firmwareDeviceKey(st)', firmwareContext);
   await vm.runInContext('readFirmware()', firmwareContext);
   assert.equal(firmwareContext.st.devices[0].mode, 'dongle_paired');
   assert.equal(firmwareContext.fw.device, 'dongle');
-  assert.equal(vm.runInContext('deviceKey(st)', firmwareContext), originalKey,
+  assert.equal(vm.runInContext('firmwareDeviceKey(st)', firmwareContext), originalKey,
     'correcting the receiver mode must not look like a USB reconnect');
   await vm.runInContext('readFirmware()', firmwareContext);
-  assert.equal(vm.runInContext('deviceKey(st)', firmwareContext), originalKey,
+  assert.equal(vm.runInContext('firmwareDeviceKey(st)', firmwareContext), originalKey,
     'manual reads must preserve the original enumeration mode');
-  assert.notEqual(vm.runInContext('deviceKey({devices: []})', firmwareContext), originalKey,
+  assert.notEqual(vm.runInContext('firmwareDeviceKey({devices: []})', firmwareContext), originalKey,
     'actual disconnection must still trigger a refresh');
 
   console.log('XInput receiver identity correction: passed');

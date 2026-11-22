@@ -123,3 +123,12 @@ pad=neutral();pad.mapping='standard';context.nativePadId=pad.id;
 vm.runInContext('windowsStockPad=nativePadId;windowsStockAt=Date.now();windowsStockState={lt:0,rt:0,pressed:["L4","R4"]}',context);
 vm.runInContext('windowsTick()',context);
 assert(events.at(-1).pressed.includes('L4') && events.at(-1).pressed.includes('R4'));
+
+pad = neutral(); pad.mapping = 'standard'; pad.axes = [1,1];
+pad.buttons[0] = {pressed: true, value: 1};
+context.nativePadId = pad.id;
+vm.runInContext(`windowsStockPad = nativePadId; windowsStockAt = Date.now(); windowsStockState = {
+  available:true, lx:-.25, ly:.5, rx:.75, ry:-1, lt:.2, rt:.8, pressed:['Y','Down','L4']}; windowsTick()`,context);
+assert.deepEqual(Array.from(events.at(-1).pressed), ['A','L4'], 'browser buttons must not be replaced by HID');
+assert.deepEqual(['lx','ly','rx','ry','lt','rt'].map(k=>events.at(-1)[k]), [1,-1,0,-0,0,0]);
+console.log('Hybrid mapping preserves browser sticks and buttons: passed');

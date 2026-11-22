@@ -186,8 +186,17 @@ def check(stock, keys=None):
             c.packet(0,bytes.fromhex("81 05 00 5b"),route)
             assert c.battery_replies == [bytes((0x5b,63,0xed,0x0e,1,1))],(route,c.battery_replies)
             assert c.vendor_calls == []
-            c.packet(100,bytes.fromhex("81 05 00 51 00"),route)
+            assert c.rd(proto.STATE+16,4) == 0, 'battery query must not lock or delay switching'
+            # Repeated battery reads during the entire hold must not reset it.
+            c.poll(100,H|B);c.packet(1000,bytes.fromhex("81 05 00 5b"),route)
+            c.poll(1500,H|B);c.packet(3000,bytes.fromhex("81 05 00 5b"),route)
+            c.poll(3100,H|B);assert c.rd8(proto.MODE)==1
+            c.poll(3200,0);c.poll(3300,H|X)
+            c.packet(5000,bytes.fromhex("81 05 00 5b"),route)
+            c.poll(6300,H|X);assert c.rd8(proto.MODE)==0
+            c.packet(6400,bytes.fromhex("81 05 00 51 00"),route)
             assert c.vendor_calls == [stock],(route,c.vendor_calls)
+            assert c.rd(proto.STATE+16,4)&1, "update command must still lock switching"
         print('ok: cable battery reply on both vendor routes; update command remains on stock handler')
     for packet in ('81 05 c1 00 00','81 05 02 00 00','81 05 03 00 00','81 05 04 00 00',
                    '81 05 0b 00 00','81 05 c4 00 00','81 05 00 51 00','81 05 00 55 00','81 00 66 aa 64'):

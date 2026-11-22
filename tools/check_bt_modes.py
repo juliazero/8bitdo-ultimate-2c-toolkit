@@ -166,7 +166,7 @@ def check(stock,keys):
     for bluetooth in (False,True):
         for saved in range(4):
             for button in (1<<12,1<<4):
-                c=CPU(built);c.seed(SAVED,saved,1);c.seed(STATE+1,255,1)
+                c=CPU(built);c.seed(SAVED,saved,1);c.seed(STATE,(saved>>1)&1,1);c.seed(STATE+1,255,1)
                 c.seed(WORD,(1<<28) if bluetooth else 0)
                 # A startup chord must first be released, preventing reboot loops.
                 c.seed(RAW,(1<<17)|button)
@@ -178,11 +178,12 @@ def check(stock,keys):
                 assert not c.reboots
                 c.call(home)
                 expected=((saved|2) if button==1<<12 else (saved&~2)) if bluetooth else saved
-                assert c.reboots==[((1<<17)|button,expected)]
+                restart=not bluetooth or expected!=saved
+                assert c.reboots==([((1<<17)|button,expected)] if restart else [])
                 assert c.saves==([expected] if expected!=saved or (not bluetooth and button==1<<12) else [])
                 if not bluetooth:assert c.rd8(SAVED+2)==int(button==1<<12) and c.rd8(SAVED+3)==0
                 for _ in range(35):c.call(home)
-                assert len(c.reboots)==1 and c.home_calls==1
+                assert len(c.reboots)==int(restart) and c.home_calls==1
     for buttons,power in ((1<<17,0),((1<<17)|(1<<4)|(1<<12),0),((1<<17)|(1<<12)|(1<<25)|(1<<26),0),((1<<17)|(1<<12),1)):
         c=CPU(built);c.seed(RAW,buttons);c.seed(0x800518,power,1)
         for _ in range(40):c.call(home)

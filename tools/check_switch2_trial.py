@@ -87,10 +87,19 @@ def check(raw,build,path):
             for tick in range(30):live.call(report['dispatch']['home'])
             assert not live.reboots
             live.call(report['dispatch']['home'])
-            assert len(live.reboots)==1 and live.rd8(0x843915)==0x80|usb|mode
-            live.call(report['dispatch']['home']);assert len(live.reboots)==1
+            assert len(live.reboots)==int(mode!=0) and live.rd8(0x843915)==0x80|usb|mode
+            live.call(report['dispatch']['home']);assert len(live.reboots)==int(mode!=0)
             restarted=cpu(saved=live.rd8(0x843915))
             assert restarted.rd8(ACTIVE)==int(mode==4)
+        # Every active profile ignores its own selection chord; other profiles still reboot once.
+        for current,active_key in ((0,1<<4),(2,1<<12),(4,1<<5)):
+            for key in (1<<4,1<<12,1<<5):
+                live=cpu(saved=0x80|usb|current)
+                live.seed(0x84342c,1<<28);live.seed(0x84344c,0);live.call(report['dispatch']['home'])
+                live.seed(0x84344c,(1<<17)|key)
+                for tick in range(65):live.call(report['dispatch']['home'])
+                assert len(live.reboots)==int(key!=active_key), (current,key,live.reboots)
+                assert len(live.saves)==int(key!=active_key), (current,key,live.saves)
         blocked=cpu(1<<5,saved=initial)
         blocked.seed(0x84344c,(1<<28)|(1<<17)|(1<<5))
         for tick in range(40):blocked.call(report['dispatch']['home'])

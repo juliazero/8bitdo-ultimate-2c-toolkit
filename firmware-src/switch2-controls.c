@@ -48,5 +48,7 @@ void y_home(void) {
     if((CHORD&192)!=kind) {CHORD=kind;return;}
     count=(CHORD&63)+1;CHORD=kind|count;
     if(count<30) return;
-    CHORD=255;keep(choose(remembered(),key));stock_reboot();
+    CHORD=255;
+    if(key==(ACTIVE ? Y : D_MODE ? B : X)) return;
+    keep(choose(remembered(),key));stock_reboot();
 }

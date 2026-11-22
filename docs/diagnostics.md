@@ -59,12 +59,22 @@ a controller. The response can include the firmware-reported percentage,
 voltage, charge-full latch, and external-power flag.
 
 **Firmware limitation:** this command is not part of stock firmware 1.09.
-Some builds contain it, but the currently retained known-good D-input vendor
-hooks do not route to the new battery handler. In that case Diagnostics must
-show *unavailable*, not invent a battery percentage. Do not restore the newer
-vendor hooks merely for battery display: they caused D-input rumble and
-bootloader-entry regressions on hardware. A separate firmware fix is needed,
-with on-device regression testing, before USB reporting can be guaranteed.
+The previous battery-enabled `usb_dinput` blob processed `0x5b` through the
+USB mode-switch guard before answering it. As a result, reading the battery
+could lock XInput/D-input switching until restart. The updated blob handles
+this exact read before the guard; all write/update locks remain. Reinstall the
+same USB tweak to apply the fix. Both directions pass instruction-level tests,
+but hardware validation is still required.
+
+USB battery readings refresh automatically in the visible Diagnostics tab,
+after a five-second device settling period and then every 60 seconds. **Read USB
+battery** requests an immediate reading. Reads are skipped while another job,
+firmware read, or vibration test is active; the USB identity read is retained.
+An unchanged device reuses the last firmware report; changing tabs does not
+request another full firmware read. On Windows, native HID reports take precedence over
+WebView's gamepad mapping for all D-input controls, including L4/R4. The HID
+handle is closed when streaming ends. Older firmware may still lock mode
+switching if the user manually requests a battery reading before upgrading.
 
 When the controller is plugged in as an Xbox 360 and the OS hides the vendor
 interface, this app cannot read the firmware's battery command either. Use

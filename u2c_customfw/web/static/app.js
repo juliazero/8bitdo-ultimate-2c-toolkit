@@ -90,6 +90,7 @@ function hero(devs, ctrl, boot) {
   else if (!ctrl && !bt && !dongle && inputOnly) [title, note] = ["Xbox 360 USB input detected", fw && fw.note || "Windows exposes input only. Enter update mode with LB + RB while connecting USB to access firmware."];
   else if (!ctrl && !bt && !dongle) [cls, title, note] = ["none", "No controller found", "Connect it by cable, or put it in update mode."];
   else if (reading) title = "Reading the firmware…";
+  else if (!fw && !refreshing) note = "Firmware identification follows the connection automatically. Click Refresh to read it again.";
   else if (fw && fw.error) [cls, title, note] = ["bad", "Can't read the firmware", fw.error];
   else if (fw && fw.device === "dongle" && fw.boot) [cls, title, note] = [fw.known ? "" : "bad", "The dongle is in update mode",
     fw.known ? "Its firmware is complete. Unplug it and plug it back in to use it, or install or restore." : "Its firmware is missing or incomplete. Restore your backup or 8BitDo's original firmware 1.03."];
@@ -212,6 +213,7 @@ function showTab(name) {
   if (name !== tab) {  // both tabs listen to the bridge, so the one being left stops first
     if (tab === "diagnostics") diagnosticsHide();
     if (tab === "settings") settingsHide();
+    tab = name; // publish the new tab before a bridge can emit its first connection event
     if (name === "diagnostics") diagnosticsShow();
     if (name === "settings") settingsShow();
   }
@@ -325,7 +327,7 @@ async function runJob(label, path, body, doneText) {  // doneText: the status wh
   $("dock-message").textContent = end.message || ""; $("dock-message").hidden = !end.message; $("idle").hidden = true;
   $("prog").hidden = $("pc").hidden = !!end.message;   // the message takes the progress bar's place
   if (ok) setPct(100);
-  busy = false; refresh();
+  busy = false; fw = null; refresh(true);
 }
 
 function ask(title, text, chips, yes, kind = "safe") {  // kind: "install" (the warranty line and danger styling), "danger" or "safe"
@@ -356,9 +358,16 @@ function renderDisclaimer(md) {  // "# title", paragraphs, **bold**: no HTML fro
   }
 }
 
-let refreshing = false, refreshAgain = false;  // one read of the controller at a time; a change during it reads again after
-async function refresh() {
-  if (refreshing) { refreshAgain = true; return; }
+let refreshing = false, refreshAgain = null;  // one shared firmware result, independent of the selected tab
+const FIRMWARE_SETTLE_MS = 500;
+let firmwareDue = 0;
+const firmwareTarget = (state) => state?.devices.some(d => CONTROLLER.includes(d.mode) || d.mode === "xinput_only" || d.mode.startsWith("dongle") || d.mode.startsWith("bluetooth"));
+const firmwareIOBusy = () => busy || reading || (typeof cableBatteryBusy !== "undefined" && cableBatteryBusy) || (typeof testPending !== "undefined" && !!testPending);
+async function refresh(forceFirmware = false) {
+  if (refreshing) {
+    refreshAgain = {forceFirmware: forceFirmware || !!refreshAgain?.forceFirmware};
+    return;
+  }
   refreshing = true;
   const previousDevices = st;
   try {
@@ -367,11 +376,23 @@ async function refresh() {
     $("version").textContent = "v" + st.version;
     renderDisclaimer(st.disclaimer);
     if (!st.accepted && !$("disclaimer").open) $("disclaimer").showModal();
-    if (deviceKey(st) !== deviceKey(previousDevices)) fw = null;
-    render(); await readFirmware();
+    if (firmwareDeviceKey(st) !== firmwareDeviceKey(previousDevices)) {
+      fw = null;
+      firmwareDue = previousDevices && !watchingDevices ? Date.now() + FIRMWARE_SETTLE_MS : 0;
+    }
+    else if (fw?.device === "dongle" && fw.paired) {
+      // Enumeration alone cannot distinguish a paired receiver sharing the cable ID.
+      st = {...st, devices: st.devices.map(d => ["cable", "cable_360"].includes(d.mode) ? {...d, enumeratedMode: d.enumeratedMode || d.mode, mode: "dongle_paired"} : d)};
+    }
+    render();
+    if (forceFirmware) { fw = null; firmwareDue = 0; }
+    if (!fw && firmwareTarget(st)) {
+      if (!firmwareIOBusy() && Date.now() >= firmwareDue) await readFirmware();
+      else scheduleDeviceRefresh(Math.max(FIRMWARE_SETTLE_MS, firmwareDue - Date.now()));
+    }
   } finally {
     refreshing = false;
-    if (refreshAgain) { refreshAgain = false; refresh(); }
+    if (refreshAgain) { const queued = refreshAgain; refreshAgain = null; refresh(queued.forceFirmware); }
   }
 }
 
@@ -388,11 +409,14 @@ function matchInstalled() {  // start from what's installed, so installing doesn
 
 let fwSeq = 0;
 async function readFirmware() {  // read-only; skipped while a job runs, and the job buttons wait for it
-  if (busy || !st.devices.some((d) => CONTROLLER.includes(d.mode) || d.mode === "xinput_only" || d.mode.startsWith("dongle") || d.mode.startsWith("bluetooth"))) return;
-  const mine = ++fwSeq; reading = true; render();
+  if (busy || reading || !firmwareTarget(st)) return;
+  const mine = ++fwSeq, key = firmwareDeviceKey(st); reading = true;
+  if (typeof stopWindowsStockStream === "function") stopWindowsStockStream();
+  render();
   let f;
   try { f = await api("GET", "/api/firmware"); } catch (e) { f = { error: e.message }; }
   if (mine !== fwSeq) return;
+  if (key !== firmwareDeviceKey(st)) { reading = false; render(); return; }
   // Correct the provisional USB identity once the memory read identifies a
   // paired receiver. Settings and the connection badge use the same mode.
   if (f.device === "dongle" && f.paired) {
@@ -407,7 +431,7 @@ $("disclaimer").oncancel = (e) => e.preventDefault();
 $("disclaimer-quit").hidden = !bridge();   // declining: only the Mac app can quit itself
 $("disclaimer-quit").onclick = () => bridge().postMessage({ op: "quit" });
 $("accept").onclick = async () => { await api("POST", "/api/accept"); $("disclaimer").close(); refresh(); };
-$("refresh").onclick = refresh;
+$("refresh").onclick = () => refresh(true);
 $("details").onclick = () => { detailsOpen = !detailsOpen; showDetails(detailsOpen && !$("sumrow").hidden); };
 TABS.forEach((t) => ($(`strip-${t}`).onclick = () => showTab(t)));
 $("force-go").onclick = () => showTab("diagnostics");
@@ -530,17 +554,52 @@ $("battlog-save").onclick = async () => {
   reading = false; render();
 };
 $("report-close").onclick = () => { $("report").close(); $("report-copy").textContent = "Copy"; };
-render(); refresh();
-
 // Notice a controller being connected, disconnected or put in update mode, without pressing Refresh.
-const deviceKey = (state) => state ? state.devices.map((d) => `${d.enumeratedMode || d.mode}:${d.vendor}:${d.product}:${d.name}`).sort().join() : "";  // compare enumeration, not the identity corrected by the firmware read
-const WATCH_MS = 2500;
-setInterval(async () => {
-  if (busy || reading || refreshing || document.hidden) return;
-  let now;
-  try { now = await api("GET", "/api/state"); } catch (e) { return; }
-  if (!busy && !reading && !refreshing && deviceKey(now) !== deviceKey(st)) refresh();
-}, WATCH_MS);
+// A firmware read targets the wired controller or receiver, not every HID interface.
+// A late Bluetooth collection or a changed display name must not invalidate it.
+const firmwareDeviceKey = (state) => {
+  const devices = state?.devices || [];
+  const mode = d => d.enumeratedMode || d.mode;
+  const wired = devices.filter(d => CONTROLLER.includes(mode(d)) || mode(d).startsWith("dongle"));
+  const candidates = wired.length ? wired : devices.filter(d => mode(d) === "xinput_only" || mode(d).startsWith("bluetooth"));
+  return candidates.map(d => `${mode(d)}:${d.vendor}:${d.product}:${d.identity || ""}`).sort().join();
+};
+// System and browser notifications are coalesced; a slow fallback covers
+// transports that change identity without an interface arrival/removal.
+let deviceRefreshTimer = null;
+function scheduleDeviceRefresh(delay = FIRMWARE_SETTLE_MS) {
+  clearTimeout(deviceRefreshTimer);
+  deviceRefreshTimer = setTimeout(() => { deviceRefreshTimer = null; watchDevices(); }, delay);
+}
+let watchingDevices = false;
+async function watchDevices() {
+  if (watchingDevices || busy || reading || refreshing || firmwareIOBusy()) {
+    scheduleDeviceRefresh(); return;
+  }
+  watchingDevices = true;
+  try {
+    await refresh();
+  } catch (_) { /* A later notification or fallback scan can recover. */ }
+  finally { watchingDevices = false; }
+}
+async function listenDeviceEvents() {
+  let generation = -1;
+  while (true) {
+    try {
+      const event = await api("GET", `/api/device-events?generation=${generation}`);
+      if (event.generation !== generation) scheduleDeviceRefresh();
+      generation = event.generation;
+      if (!event.available) return; // browser events and slow fallback still work
+    } catch (_) { await new Promise(resolve => setTimeout(resolve, 5000)); }
+  }
+}
+window.addEventListener?.("gamepadconnected", () => scheduleDeviceRefresh());
+window.addEventListener?.("gamepaddisconnected", () => scheduleDeviceRefresh());
+window.addEventListener?.("focus", () => scheduleDeviceRefresh());
+// No firmware read on a stable connection. The fallback only checks identity.
+setInterval(watchDevices, 30000);
+render(); scheduleDeviceRefresh();
+listenDeviceEvents();
 api("GET", "/api/update").then((u) => {   // asked once, after the page is up; offline, nothing shows
   if (!u.version) return;
   $("update-version").textContent = u.version;

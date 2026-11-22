@@ -25,6 +25,7 @@ from ..ops.plan import OpError
 from ..protocol import ProtocolError, app
 from ..transport import PermissionDenied
 from . import jobs
+from .device_events import DeviceEvents
 from .linux_gamepad import GAMEPAD
 from .windows_rumble import RUMBLE as WINDOWS_RUMBLE
 from .hid_rumble import RUMBLE as HID_RUMBLE
@@ -81,6 +82,11 @@ def page_html():
 
 class LocalHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = sys.platform != "win32"
+
+    def server_close(self):
+        if hasattr(self, "device_events"):
+            self.device_events.close()
+        super().server_close()
 
     def server_bind(self):
         if sys.platform == "win32":
@@ -155,7 +161,7 @@ def make_server(store: Path, port: int = 0):
             if not self.host_ok():
                 return self.send(403, "forbidden", "text/plain")
             path = self.path.split("?")[0]
-            route = {"/api/simulation": self.api_simulation, "/api/windows-stock-stream": self.api_windows_stock_stream, "/api/windows-stock-gamepad": self.api_windows_stock_gamepad, "/api/windows-battery": self.api_windows_battery, "/api/battery": self.api_battery, "/api/state": self.api_state, "/api/events": self.api_events, "/api/firmware": self.api_firmware,
+            route = {"/api/simulation": self.api_simulation, "/api/windows-stock-stream": self.api_windows_stock_stream, "/api/windows-stock-gamepad": self.api_windows_stock_gamepad, "/api/windows-battery": self.api_windows_battery, "/api/battery": self.api_battery, "/api/state": self.api_state, "/api/device-events": self.api_device_events, "/api/events": self.api_events, "/api/firmware": self.api_firmware,
                      "/api/settings": self.api_settings_read, "/api/linux-gamepad": self.api_linux_gamepad, "/api/busy": self.api_busy, "/api/update": self.api_update, "/api/job": self.api_job, "/api/windows-rumble": self.api_windows_rumble}.get(path)
             if route:
                 return route()
@@ -182,7 +188,7 @@ def make_server(store: Path, port: int = 0):
             self.end_headers()
             deadline = time.monotonic() + 30
             try:
-                while time.monotonic() < deadline:
+                while time.monotonic() < deadline and not runner.running and not runner.closing:
                     state = WINDOWS_STOCK_GAMEPAD.snapshot()
                     payload = ("data: " + json.dumps(state) + "\n\n").encode()
                     self.wfile.write(f"{len(payload):x}\r\n".encode() + payload + b"\r\n")
@@ -193,14 +199,19 @@ def make_server(store: Path, port: int = 0):
                 self.wfile.write(b"0\r\n\r\n")
                 self.wfile.flush()
             except OSError:
-                pass   # Browser left diagnostics; only read-only input was being streamed.
+                pass   # Browser left diagnostics.
+            finally:
+                WINDOWS_STOCK_GAMEPAD.close()
 
         def api_windows_stock_gamepad(self):
             if not self.auth():
                 return
             if sys.platform != "win32":
                 return self.send(404, json.dumps({"error": "Windows only"}))
-            self.send(200, json.dumps(WINDOWS_STOCK_GAMEPAD.snapshot()))
+            try:
+                self.send(200, json.dumps(WINDOWS_STOCK_GAMEPAD.snapshot()))
+            finally:
+                WINDOWS_STOCK_GAMEPAD.close()
 
         def api_windows_battery(self):
             if not self.auth():
@@ -235,6 +246,15 @@ def make_server(store: Path, port: int = 0):
                 return self.send(200, json.dumps(data))
             except ValueError as exc:
                 return self.send(400, json.dumps({"error": str(exc)}))
+
+        def api_device_events(self):
+            if not self.auth():
+                return
+            try:
+                generation = int(parse_qs(urlparse(self.path).query).get("generation", ["-1"])[0])
+            except ValueError:
+                return self.send(400, json.dumps({"error": "Invalid generation"}))
+            self.send(200, json.dumps(self.server.device_events.wait(generation)))
 
         def api_state(self):
             if not self.auth():
@@ -673,6 +693,7 @@ def make_server(store: Path, port: int = 0):
 
     httpd = LocalHTTPServer(("127.0.0.1", port), Handler)
     httpd.runner = runner
+    httpd.device_events = DeviceEvents()
     return httpd, token
 
 

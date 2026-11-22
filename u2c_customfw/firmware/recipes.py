@@ -254,7 +254,7 @@ def _make() -> dict[str, Recipe]:
             Edit(0xA484, _blob("loghook.bin")),                  # the main loop's 100 ms call: the log first, then rest_main_poll
         )),
         Recipe("usb_dinput", "USB XInput / D-input switching", (), (
-            Edit(0x9964, _blob("usbmode.bin"), accepts=(_blob("usbmode01.bin"), _blob("usbmode02.bin"), _blob("usbmode03.bin"), _blob("usbmode04.bin"), _blob("usbmode05.bin"), _blob("usbmode-pre12.bin"), _blob("usbmode-prevendor12.bin"), _blob("usbmode-prebaseline.bin"))),  # retains Battery log, then mode switching at 0x9a70
+            Edit(0x9964, _blob("usbmode.bin"), accepts=(_blob("usbmode-pre-battery-lock-fix.bin"), _blob("usbmode01.bin"), _blob("usbmode02.bin"), _blob("usbmode03.bin"), _blob("usbmode04.bin"), _blob("usbmode05.bin"), _blob("usbmode-pre12.bin"), _blob("usbmode-prevendor12.bin"), _blob("usbmode-prebaseline.bin"))),  # retains Battery log, then mode switching at 0x9a70
             # Use the stock wired D-input PID, avoiding the Bluetooth-only Steam/SDL parser.
             Edit(0x17AFE, bytes.fromhex("1d30"), accepts=(bytes.fromhex("1b30"),)),
             Edit(0xEA08, _u32(600000), accepts=(_u32(200000),)),  # 600 ms USB detach on a mode change

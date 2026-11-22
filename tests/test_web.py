@@ -362,6 +362,7 @@ class WebTest(unittest.TestCase):
             status, body = self.call("GET", "/api/windows-stock-gamepad")
             self.assertEqual(status, 200)
             self.assertEqual(json.loads(body)["rt"], .5)
+            gamepad.close.assert_called_once()
             self.assertFalse(self.httpd.runner.running)
 
     def test_stock_bluetooth_stream_delivers_each_state_and_ends_on_disconnect(self):
@@ -374,6 +375,7 @@ class WebTest(unittest.TestCase):
             self.assertEqual(status, 200)
             received = [json.loads(line[6:]) for line in body.splitlines() if line.startswith("data: ")]
             self.assertEqual(received, states)
+            gamepad.close.assert_called_once()
             self.assertTrue(self.httpd.RequestHandlerClass.disable_nagle_algorithm)
 
     def test_bluetooth_ring_validates_auth_and_releases_device_after_failure(self):
